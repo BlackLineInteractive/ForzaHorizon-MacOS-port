@@ -902,6 +902,26 @@ GuestFunc Sdk(const char* name) { return forza::SdkImport(name); }
 extern "C" REX_FUNC(__imp__XMsgInProcessCall) {
   static GuestFunc sdk = Sdk("__imp__XMsgInProcessCall");
   const uint32_t in[6] = {ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, ctx.r8.u32};
+  // XMPGetPlaybackController (music player app 0xFA, message 0x7001B; buffer: client,
+  // controller*, locked*; the game's wrapper is sub_82A63FE8). The SDK answers "no
+  // controller, not locked" after a 10 ms sleep on threads other than the main thread
+  // (from Xenia, for games that poll it in a tight loop). RecompiledHaloReach's audio
+  // thread asks once per frame and the sleep held it to 45 fps; Forza polls it in a loop
+  // instead (about 46 calls/s with the sleep, 10,500/s without: one core spinning) and
+  // free roam stays at 30 fps either way (docs/perf.md), so the SDK's answer stays.
+  // FORZA_XMP_NOSLEEP=1 answers at once (for frame-rate experiments above 30 fps).
+  static const bool xmp_nosleep = [] {
+    const char* v = std::getenv("FORZA_XMP_NOSLEEP");
+    return v && *v == '1';
+  }();
+  if (in[0] == 0xFA && in[1] == 0x7001B && in[2] && xmp_nosleep) {
+    const uint32_t controller_ptr = Load32(GuestPtr(base, in[2] + 4));
+    const uint32_t locked_ptr = Load32(GuestPtr(base, in[2] + 8));
+    if (controller_ptr) Store32(GuestPtr(base, controller_ptr), 0);
+    if (locked_ptr) Store32(GuestPtr(base, locked_ptr), 0);
+    ctx.r3.u64 = 0;  // X_E_SUCCESS
+    return;
+  }
   const uint32_t result = Handle(base, in[0], in[1], in[2], in[3]);
   if (result != kNotOurs) {
     ctx.r3.u64 = result;
