@@ -21,3 +21,5 @@ __pycache__/
 .claude/settings.local.json
 # Screenshots of the game (derived from game assets)
 screenshots/
+# Forza Live server data (server/forza_live_server.py --data-dir default)
+forza_live_data/

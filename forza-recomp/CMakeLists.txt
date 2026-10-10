@@ -57,19 +57,26 @@ set(FORZA_SOURCES
     src/kernel/file_delete_on_close.cpp
     src/kernel/file_size_refresh.cpp
     src/kernel/input_autopress.cpp
-    src/kernel/profile_identity.cpp
+    src/kernel/identity.cpp
+    src/kernel/live_lsp.cpp
+    src/kernel/live_tcp.cpp
+    src/kernel/live_xmsg.cpp
+    src/kernel/net.cpp
     src/kernel/xam_enumerate.cpp
     src/kernel/xam_nui.cpp
+    src/kernel/xam_signin.cpp
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
     src/platform/sdk_import.cpp
+    src/platform/socket.cpp
     src/platform/vulkan_hooks.cpp
 )
 
 if(WIN32)
     add_executable(forza WIN32 ${FORZA_SOURCES})
     target_compile_definitions(forza PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(forza PRIVATE ws2_32)
 else()
     add_executable(forza ${FORZA_SOURCES})
 endif()

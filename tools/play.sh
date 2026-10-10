@@ -4,6 +4,12 @@
 #
 #   tools/play.sh                 # your profile and progress in ~/.local/share/forza
 #   tools/play.sh --xenia [XUID]  # continue your Xenia save (see below)
+#   tools/play.sh --offline       # no Xbox LIVE (no Forza Live server)
+#
+# Xbox LIVE: the game is signed in to LIVE through a Forza Live server (server/), as a
+# Gold member. live_server in forza.toml or FORZA_SERVER=host[:port] names a shared one;
+# otherwise this script starts one on this machine (127.0.0.1:21200, HTTP 21201, data in
+# ~/.local/share/forza/live_server) for the session, or uses the one already running there.
 #
 # Profile: the runtime signs in one local profile (XUID B13EBABEBABEBABE) on player 1, and
 # every controller drives player 1, so START on any pad gets past the title screen. Saves
@@ -30,7 +36,7 @@ DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/forza"
 TITLE=4D5309C9
 LOCAL_PROFILE=B13EBABEBABEBABE  # the runtime's own profile folder
 
-xenia=0; refresh=0; xuid=""
+xenia=0; refresh=0; xuid=""; offline=0
 args=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -38,6 +44,7 @@ while [ $# -gt 0 ]; do
             xenia=1
             [ "$1" = --xenia-refresh ] && refresh=1
             if [ $# -gt 1 ] && [[ "$2" =~ ^[0-9A-Fa-f]{16}$ ]]; then xuid="${2^^}"; shift; fi ;;
+        --offline) offline=1 ;;
         *) args+=("$1") ;;
     esac
     shift
@@ -86,10 +93,27 @@ if [ "$xenia" = 1 ]; then
     args=(--user_data_root="$root" --cache_root="$DATA_HOME/cache" --profile_xuid="$xuid" "${args[@]}")
 fi
 
+server_pid=""
+if [ "$offline" = 0 ] && [ -z "${FORZA_SERVER:-}" ] &&
+   ! grep -qsE '^\s*live_server\s*=\s*"[^"]+' "$BUILD/forza.toml"; then
+    # No shared server configured: a local one (or the one another instance started).
+    if ! (exec 3<>/dev/tcp/127.0.0.1/21201) 2>/dev/null; then
+        mkdir -p "$DATA_HOME/live_server"
+        python3 "$ROOT/server/forza_live_server.py" --host 127.0.0.1 --port 21200 \
+            --http-port 21201 --data-dir "$DATA_HOME/live_server" \
+            > "$DATA_HOME/live_server/server.log" 2>&1 &
+        server_pid=$!
+        sleep 0.5
+    fi
+    export FORZA_SERVER=127.0.0.1:21200
+fi
+[ "$offline" = 1 ] && unset FORZA_SERVER
+
 cd "$BUILD"
 LD_LIBRARY_PATH="$SDK/lib:$BUILD" ./forza --game_data_root="$DATA" \
     --log_file="$DATA_HOME/forza.log" "${args[@]}"
 status=$?
+[ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null
 # Guest memory (/dev/shm/xenia_memory_*, 5 GB) is not unlinked when the game is killed.
 for shm in /dev/shm/xenia_memory_*; do
     [ -O "$shm" ] || continue

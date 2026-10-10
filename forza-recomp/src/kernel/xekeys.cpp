@@ -5,23 +5,19 @@
 // the SDK the first and last are stubs that write nothing (the game then reads whatever
 // its stack held), PrivateKeySign returns FALSE without a certificate and the
 // verification returns FALSE. Xenia, where the user's saves come from, returns a fixed
-// console ID and certificate, leaves the verification unimplemented (r3 keeps the hash
-// pointer: nonzero, "valid") and maps the signed-in profile's XUID to its user index.
+// console ID and certificate and leaves the verification unimplemented (r3 keeps the
+// hash pointer: nonzero, "valid"). (XamUserGetIndexFromXUID: xam_signin.cpp.)
 // Matching it keeps saves made in either one loadable in the other.
 
 #include "../platform/guest_memory.h"
 
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
-#include <rex/system/kernel_state.h>
-#include <rex/system/xam/user_profile.h>
 
 #include <cstdint>
 #include <cstring>
 
 using forza::GuestPtr;
-
-uint64_t ForzaProfileXuid();  // profile_identity.cpp: 0 when not overridden
 
 namespace {
 
@@ -30,8 +26,6 @@ namespace {
 constexpr uint8_t kConsoleId[5] = {0x93, 0x01, 0x64, 0xE6, 0x07};
 constexpr char kConsoleIdHex[12] = {'2', '4', '5', '1', '4', '9', '1', '0', '0', '0', '0', '0'};
 constexpr uint32_t kCertificateSize = 0x1A8;  // XE_CONSOLE_CERTIFICATE
-constexpr uint32_t kErrorNoSuchUser = 0x80070525;  // X_E_NO_SUCH_USER
-constexpr uint32_t kErrorInvalidArg = 0x80070057;  // X_E_INVALIDARG
 
 }  // namespace
 
@@ -64,24 +58,4 @@ extern "C" REX_FUNC(__imp__XeKeysConsolePrivateKeySign) {
 extern "C" REX_FUNC(__imp__XeKeysConsoleSignatureVerification) {
   (void)base;
   ctx.r3.u64 = ctx.r3.u32 ? 1 : 0;
-}
-
-// DWORD XamUserGetIndexFromXUID(XUID xuid, DWORD flags, DWORD* index)
-extern "C" REX_FUNC(__imp__XamUserGetIndexFromXUID) {
-  const uint64_t xuid = ctx.r3.u64;
-  const uint32_t index = ctx.r5.u32;
-  if (!index) {
-    ctx.r3.u64 = kErrorInvalidArg;
-    return;
-  }
-  // The only signed-in profile is user 0: the runtime's own XUID, or the override.
-  const auto* kernel = rex::system::kernel_state();
-  const uint64_t own = kernel && kernel->user_profile() ? kernel->user_profile()->xuid() : 0;
-  if (xuid == own || (ForzaProfileXuid() && xuid == ForzaProfileXuid())) {
-    uint8_t* out = GuestPtr(base, index);
-    std::memset(out, 0, 4);
-    ctx.r3.u64 = 0;
-    return;
-  }
-  ctx.r3.u64 = kErrorNoSuchUser;
 }
