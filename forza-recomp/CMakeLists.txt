@@ -46,10 +46,13 @@ endif()
 set(FORZA_SOURCES
     src/main.cpp
     src/debug/audio_level.cpp
+    src/debug/cpu_profile.cpp
     src/debug/fault_guard.cpp
     src/debug/fiber_trace.cpp
     src/debug/frame_stats.cpp
+    src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
+    src/hooks/physics_loader_check.cpp
     src/kernel/critical_section.cpp
     src/kernel/file_delete_on_close.cpp
     src/kernel/file_size_refresh.cpp
@@ -59,7 +62,9 @@ set(FORZA_SOURCES
     src/kernel/xam_nui.cpp
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
+    src/platform/achievement_toast.cpp
     src/platform/sdk_import.cpp
+    src/platform/vulkan_hooks.cpp
 )
 
 if(WIN32)
@@ -70,6 +75,18 @@ else()
 endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
+
+# src/platform/vulkan_hooks.cpp (and the app header) include the SDK's Vulkan headers,
+# which include <renderdoc_app.h> from this interface target and the X11/Wayland client
+# headers (stand-ins in src/platform/wsi_stubs, so no window-system packages are needed).
+# From RecompiledHaloReach.
+if(TARGET rex::renderdoc)
+    target_link_libraries(forza PRIVATE rex::renderdoc)
+endif()
+if(UNIX AND NOT APPLE)
+    set_source_files_properties(src/platform/vulkan_hooks.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wsi_stubs")
+endif()
 
 # The stock SDK Xenos plugin has rendering bugs (e.g. it reads the texture-fetch
 # exponent bias from the wrong fetch-constant word, which darkens textures 256x).

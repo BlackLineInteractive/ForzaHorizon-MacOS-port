@@ -1,4 +1,12 @@
-// forza - scripted controller input for unattended boot tests.
+// forza - controller routing (every pad drives player 1) and scripted input for tests.
+//
+// Routing: the runtime signs in one profile, on user 0, and gives each SDL pad its own
+// user slot in connection order. With virtual pads around (Steam Input, Sunshine), the
+// pad in your hands is often slot 1 or 2: Forza then sees START from an unsigned user and
+// asks it to sign in, which nothing can answer, and the title screen never goes away. So
+// every pad is merged into user 0 (buttons combined, the strongest stick and trigger
+// wins) and users 1-3 report no controller. FORZA_PAD_PER_USER=1 restores the SDK's
+// one-slot-per-pad behaviour. Vibration for user 0 goes to every pad.
 //
 // FORZA_AUTOPRESS="45:A,50:START,52.5:DOWN,60:LSUP:3" presses each input at
 // the given number of seconds after the first XamInputGetState call, for 0.3 s
@@ -10,13 +18,15 @@
 //
 // FORZA_AUTOPRESS_FIFO=<path> also reads "INPUT[:hold]" lines from that FIFO
 // (create it with mkfifo) while the game runs and presses each one as it
-// arrives, so menus can be stepped through while watching frame dumps
+// arrives ("PADn:INPUT" presses it on the pad in SDK slot n, before routing), so menus can be stepped through while watching frame dumps
 // (FORZA_FRAMEDUMP_TRIGGER). In either mode the game sees a connected, centred
 // controller between presses instead of a disconnected one. "SCENE:<name>" lines label
-// the frame statistics (RECOMP_PERF, src/debug/frame_stats.cpp).
+// the frame statistics (RECOMP_PERF, src/debug/frame_stats.cpp); "PROF:START" and
+// "PROF:STOP" run the CPU sampler (src/debug/cpu_profile.cpp).
 
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
+#include "../debug/cpu_profile.h"
 #include "../debug/frame_stats.h"
 
 #include <rex/logging.h>
@@ -33,6 +43,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -45,6 +56,7 @@ namespace {
 using GuestFunc = void (*)(PPCContext&, uint8_t*);
 
 struct Press {
+  uint32_t slot;  // SDK input slot the press is injected into (FIFO "PADn:" prefix)
   double at_seconds;
   double hold_seconds;
   uint16_t buttons;
@@ -146,13 +158,29 @@ void ReadFifo(std::string path, std::vector<Press>* schedule,
       continue;
     }
     double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (line == "PROF:START" || line == "PROF:STOP") {  // debug/cpu_profile.cpp
+      if (line == "PROF:START") {
+        forza::cpuprof::Start();
+      } else {
+        forza::cpuprof::Stop();
+      }
+      line.clear();
+      continue;
+    }
     if (line.rfind("SCENE:", 0) == 0) {  // frame statistics label (debug/frame_stats.cpp)
       forza::perf::SetScene(line.substr(6));
       line.clear();
       continue;
     }
+    uint32_t slot = 0;
+    if (line.size() > 5 && line.rfind("PAD", 0) == 0 && line[3] >= '0' && line[3] <= '3' &&
+        line[4] == ':') {  // "PAD1:START": a press on the pad in slot 1 (routing tests)
+      slot = uint32_t(line[3] - '0');
+      line = line.substr(5);
+    }
     std::vector<Press> parsed = ParseSchedule(("0:" + line).c_str());
     for (Press& press : parsed) {
+      press.slot = slot;
       press.at_seconds = now;
       std::lock_guard<std::mutex> lock(schedule_mutex);
       schedule->push_back(press);
@@ -163,21 +191,26 @@ void ReadFifo(std::string path, std::vector<Press>* schedule,
 #endif
 }
 
-GuestFunc SdkGetState() {
-  static GuestFunc fn = forza::SdkImport("__imp__XamInputGetState");
-  return fn;
+GuestFunc Sdk(const char* name) { return forza::SdkImport(name); }
+
+constexpr uint32_t kErrorDeviceNotConnected = 0x48F;
+constexpr uint32_t kFlagAnyUser = 1u << 30;
+constexpr uint32_t kSlots = 4;
+
+bool PadPerUser() {
+  static const bool on = [] {
+    const char* v = std::getenv("FORZA_PAD_PER_USER");
+    return v && *v && *v != '0';
+  }();
+  return on;
 }
 
-}  // namespace
+std::vector<Press> schedule;
+std::chrono::steady_clock::time_point start;
+bool scripted = false;
 
-// DWORD XamInputGetState(DWORD user_index, DWORD flags, X_INPUT_STATE* state)
-// X_INPUT_STATE: be32 packet_number; be16 buttons; u8 lt; u8 rt; be16 lx, ly, rx, ry.
-extern "C" REX_FUNC(__imp__XamInputGetState) {
+void InitScripting() {
   static std::once_flag once;
-  static std::vector<Press> schedule;
-  static std::chrono::steady_clock::time_point start;
-  static uint32_t packet = 0;
-  static bool scripted = false;
   std::call_once(once, [] {
     start = std::chrono::steady_clock::now();
     if (const char* spec = std::getenv("FORZA_AUTOPRESS")) {
@@ -189,54 +222,222 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
       scripted = true;
       std::thread(ReadFifo, std::string(fifo), &schedule, start).detach();
     }
+    if (!PadPerUser()) REXLOG_INFO("Input: every pad drives user 0 (FORZA_PAD_PER_USER=1 to split)");
   });
+}
 
-  const uint32_t user_index = ctx.r3.u32;
-  const uint32_t state_addr = ctx.r5.u32;
-  if (GuestFunc sdk = SdkGetState()) {
-    sdk(ctx, base);
-  }
-  if (!scripted || user_index != 0 || state_addr == 0) return;
-
-  double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-  uint16_t injected = 0;
-  int16_t sticks[4] = {};
+// X_INPUT_STATE (16 bytes): be32 packet; be16 buttons; u8 lt, rt; be16 lx, ly, rx, ry.
+struct PadState {
+  uint16_t buttons = 0;
   uint8_t triggers[2] = {};
+  int16_t sticks[4] = {};
+};
+
+PadState Decode(const uint8_t* p) {
+  PadState s;
+  s.buttons = uint16_t(p[4] << 8 | p[5]);
+  s.triggers[0] = p[6];
+  s.triggers[1] = p[7];
+  for (int i = 0; i < 4; ++i) s.sticks[i] = int16_t(p[8 + 2 * i] << 8 | p[9 + 2 * i]);
+  return s;
+}
+
+void Encode(const PadState& s, uint32_t packet, uint8_t* p) {
+  p[0] = uint8_t(packet >> 24);
+  p[1] = uint8_t(packet >> 16);
+  p[2] = uint8_t(packet >> 8);
+  p[3] = uint8_t(packet);
+  p[4] = uint8_t(s.buttons >> 8);
+  p[5] = uint8_t(s.buttons);
+  p[6] = s.triggers[0];
+  p[7] = s.triggers[1];
+  for (int i = 0; i < 4; ++i) {
+    p[8 + 2 * i] = uint8_t(uint16_t(s.sticks[i]) >> 8);
+    p[9 + 2 * i] = uint8_t(s.sticks[i]);
+  }
+}
+
+// Scripted presses active now for `slot`; true if any.
+bool Scripted(uint32_t slot, PadState& s) {
+  if (!scripted) return false;
+  const double now =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   bool any = false;
   std::lock_guard<std::mutex> lock(schedule_mutex);
   for (const Press& p : schedule) {
-    if (now < p.at_seconds || now >= p.at_seconds + p.hold_seconds) continue;
+    if (p.slot != slot || now < p.at_seconds || now >= p.at_seconds + p.hold_seconds) continue;
     any = true;
-    injected |= p.buttons;
+    s.buttons |= p.buttons;
     for (int i = 0; i < 4; ++i) {
-      if (p.sticks[i]) sticks[i] = p.sticks[i];
+      if (p.sticks[i]) s.sticks[i] = p.sticks[i];
     }
     for (int i = 0; i < 2; ++i) {
-      if (p.triggers[i]) triggers[i] = p.triggers[i];
+      if (p.triggers[i]) s.triggers[i] = p.triggers[i];
     }
   }
-  uint8_t* state = GuestPtr(base, state_addr);
-  if (ctx.r3.u32 != kErrorSuccess) {
-    // No physical pad: present a connected, centred one, also between presses
-    // (a disconnected pad pauses gameplay).
-    std::memset(state, 0, 16);
+  return any;
+}
+
+// One SDK slot's pad (plus the scripted presses for it). Calls the SDK with this slot in
+// r3 and the game's buffer as scratch; false when nothing is connected there. A scripted
+// run presents a connected, centred pad in slot 0 even without hardware (a disconnected
+// pad pauses gameplay).
+bool ReadSlot(GuestFunc sdk, PPCContext& ctx, uint8_t* base, uint32_t slot, uint32_t flags,
+              uint32_t buffer, PadState& out) {
+  const uint64_t r3 = ctx.r3.u64, r4 = ctx.r4.u64, r5 = ctx.r5.u64;
+  ctx.r3.u64 = slot;
+  ctx.r4.u64 = flags & ~kFlagAnyUser;
+  ctx.r5.u64 = buffer;
+  if (sdk) sdk(ctx, base);
+  bool connected = sdk && ctx.r3.u32 == kErrorSuccess;
+  ctx.r3.u64 = r3;
+  ctx.r4.u64 = r4;
+  ctx.r5.u64 = r5;
+  out = connected && buffer ? Decode(GuestPtr(base, buffer)) : PadState{};
+  const bool pressed = Scripted(slot, out);
+  return connected || pressed || (scripted && slot == 0);
+}
+
+// Merges `in` into `acc`: buttons combined, the larger trigger and the stick pushed
+// furthest win.
+void Merge(PadState& acc, const PadState& in) {
+  acc.buttons |= in.buttons;
+  for (int i = 0; i < 2; ++i) acc.triggers[i] = std::max(acc.triggers[i], in.triggers[i]);
+  for (int stick = 0; stick < 2; ++stick) {
+    const int x = in.sticks[2 * stick], y = in.sticks[2 * stick + 1];
+    const int ax = acc.sticks[2 * stick], ay = acc.sticks[2 * stick + 1];
+    if (x * x + y * y > ax * ax + ay * ay) {
+      acc.sticks[2 * stick] = int16_t(x);
+      acc.sticks[2 * stick + 1] = int16_t(y);
+    }
+  }
+}
+
+bool RoutedUser(uint32_t user_index, uint32_t flags, uint32_t& user) {
+  user = ((user_index & 0xFF) == 0xFF || (flags & kFlagAnyUser)) ? 0 : user_index;
+  return user < kSlots;
+}
+
+}  // namespace
+
+// DWORD XamInputGetState(DWORD user_index, DWORD flags, X_INPUT_STATE* state)
+extern "C" REX_FUNC(__imp__XamInputGetState) {
+  static GuestFunc sdk = Sdk("__imp__XamInputGetState");
+  InitScripting();
+  const uint32_t flags = ctx.r4.u32, buffer = ctx.r5.u32;
+  uint32_t user;
+  if (!RoutedUser(ctx.r3.u32, flags, user)) {
+    if (sdk) sdk(ctx, base);
+    return;
+  }
+  PadState state;
+  bool connected;
+  if (PadPerUser()) {
+    connected = ReadSlot(sdk, ctx, base, user, flags, buffer, state);
+  } else if (user != 0) {
+    connected = false;  // every pad is player 1
+  } else {
+    connected = false;
+    for (uint32_t slot = 0; slot < kSlots; ++slot) {
+      PadState pad;
+      if (ReadSlot(sdk, ctx, base, slot, flags, buffer, pad)) {
+        connected = true;
+        Merge(state, pad);
+      }
+    }
+  }
+  if (!connected) {
+    ctx.r3.u64 = kErrorDeviceNotConnected;
+    return;
+  }
+  if (buffer) {
+    // The packet number changes whenever the state does.
+    static std::mutex packet_mutex;
+    static uint32_t packets[kSlots] = {};
+    static uint8_t last[kSlots][16] = {};
+    uint8_t bytes[16];
+    std::lock_guard<std::mutex> lock(packet_mutex);
+    Encode(state, packets[user], bytes);
+    if (std::memcmp(bytes + 4, last[user] + 4, 12) != 0) {
+      ++packets[user];
+      Encode(state, packets[user], bytes);
+      std::memcpy(last[user], bytes, 16);
+    }
+    std::memcpy(GuestPtr(base, buffer), bytes, 16);
+  }
+  ctx.r3.u64 = kErrorSuccess;
+}
+
+namespace {
+// Capabilities of user 0: the first connected slot's (a scripted run always has one).
+void Capabilities(GuestFunc sdk, PPCContext& ctx, uint8_t* base, int user_reg, int flags_reg) {
+  auto reg = [&ctx](int n) -> PPCRegister& { return (&ctx.r0)[n]; };
+  InitScripting();
+  uint32_t user;
+  if (!RoutedUser(reg(user_reg).u32, reg(flags_reg).u32, user) || PadPerUser()) {
+    if (sdk) sdk(ctx, base);
+    return;
+  }
+  if (user != 0) {
+    ctx.r3.u64 = kErrorDeviceNotConnected;
+    return;
+  }
+  const uint64_t saved = reg(user_reg).u64, saved_flags = reg(flags_reg).u64;
+  for (uint32_t slot = 0; slot < kSlots; ++slot) {
+    reg(user_reg).u64 = slot;
+    reg(flags_reg).u64 = saved_flags & ~kFlagAnyUser;
+    if (sdk) sdk(ctx, base);
+    if (sdk && ctx.r3.u32 == kErrorSuccess) {
+      reg(user_reg).u64 = saved;
+      reg(flags_reg).u64 = saved_flags;
+      return;
+    }
+  }
+  reg(user_reg).u64 = saved;
+  reg(flags_reg).u64 = saved_flags;
+  if (scripted) {
+    // A scripted run without hardware: the SDK's answer for slot 0 (its capabilities
+    // struct is filled even when nothing is connected), reported as connected.
+    if (sdk) sdk(ctx, base);
     ctx.r3.u64 = kErrorSuccess;
+    return;
   }
-  if (!any) return;
-  uint16_t buttons;
-  std::memcpy(&buttons, state + 4, 2);
-  buttons = __builtin_bswap16(static_cast<uint16_t>(__builtin_bswap16(buttons) | injected));
-  std::memcpy(state + 4, &buttons, 2);
-  for (int i = 0; i < 2; ++i) {
-    if (triggers[i]) state[6 + i] = triggers[i];
+  ctx.r3.u64 = kErrorDeviceNotConnected;
+}
+}  // namespace
+
+// DWORD XamInputGetCapabilities(DWORD user_index, DWORD flags, X_INPUT_CAPABILITIES* caps)
+extern "C" REX_FUNC(__imp__XamInputGetCapabilities) {
+  static GuestFunc sdk = Sdk("__imp__XamInputGetCapabilities");
+  Capabilities(sdk, ctx, base, 3, 4);
+}
+
+// DWORD XamInputGetCapabilitiesEx(DWORD unk, DWORD user_index, DWORD flags, caps*)
+extern "C" REX_FUNC(__imp__XamInputGetCapabilitiesEx) {
+  static GuestFunc sdk = Sdk("__imp__XamInputGetCapabilitiesEx");
+  Capabilities(sdk, ctx, base, 4, 5);
+}
+
+// DWORD XamInputSetState(DWORD user_index, DWORD unk, X_INPUT_VIBRATION* vibration)
+extern "C" REX_FUNC(__imp__XamInputSetState) {
+  static GuestFunc sdk = Sdk("__imp__XamInputSetState");
+  uint32_t user;
+  if (PadPerUser() || !RoutedUser(ctx.r3.u32, 0, user) || !sdk) {
+    if (sdk) sdk(ctx, base);
+    return;
   }
-  for (int i = 0; i < 4; ++i) {
-    if (!sticks[i]) continue;
-    uint16_t be = __builtin_bswap16(static_cast<uint16_t>(sticks[i]));
-    std::memcpy(state + 8 + 2 * i, &be, 2);
+  if (user != 0) {
+    ctx.r3.u64 = kErrorDeviceNotConnected;
+    return;
   }
-  uint32_t pkt = __builtin_bswap32(++packet | 0x80000000u);
-  std::memcpy(state, &pkt, 4);
-  REXLOG_DEBUG("FORZA_AUTOPRESS: t={:.2f}s buttons={:#06x} sticks={},{},{},{}", now, injected,
-               sticks[0], sticks[1], sticks[2], sticks[3]);
+  // Rumble on every pad: whichever one is in the player's hands.
+  const uint64_t saved = ctx.r3.u64;
+  bool any = false;
+  for (uint32_t slot = 0; slot < kSlots; ++slot) {
+    ctx.r3.u64 = slot;
+    sdk(ctx, base);
+    any |= ctx.r3.u32 == kErrorSuccess;
+    ctx.r3.u64 = saved;
+  }
+  ctx.r3.u64 = any || scripted ? kErrorSuccess : kErrorDeviceNotConnected;
 }

@@ -1,0 +1,22 @@
+# Diagnostics for the free-roam physics-loader fault (docs/PROJECT.md): before
+# sub_82D3DB00 loops over a 12-byte record's entries into its 8-slot stack array, check
+# the count (r8 = byte 9 of the record at r29) and log the record and its owner when it
+# is out of range. src/hooks/physics_loader_check.cpp.
+[[midasm_hook]]
+address = 0x82D3DB54
+name = "ForzaCheckPhysicsRecord_82D3DB54"
+registers = ["r3"]
+
+# sub_82D44B90 passes three 16-byte result structs on its stack (r1+384, +400, +416) to
+# sub_82D44248 / sub_82D440E0, then takes item indices from their +12 words (r1+396,
+# r1+412) for sub_82D3DB00. To tell "not written" from "written with garbage", fill the
+# index words with a sentinel before the calls and check them where they are used.
+[[midasm_hook]]
+address = 0x82D44E4C
+name = "ForzaSeedPhysicsIndices_82D44E4C"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x82D44FE4
+name = "ForzaCheckPhysicsIndices_82D44FE4"
+registers = ["r3"]

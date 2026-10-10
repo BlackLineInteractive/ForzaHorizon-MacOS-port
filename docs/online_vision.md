@@ -43,6 +43,15 @@ proximity/behind check, the button prompt), how its route is generated or picked
 whether the original online free roam had any player-vs-player challenge, and which UI
 prompts (accept/reject dialogs) the game already has that could be reused.
 
+Found so far (strings in `default.xex`, not yet traced to code): street races
+(`StreetRace`, `CStreetRaceHubState`, `streetracehub1..3_unlock`), the Rivals system
+(`CShowBeatRival`, `CWaitForBeatRival`, `CIsCorrectRivalData`, `RivalsBeaten`,
+`IDS_RivalsAlerts_Challenge_MsgTitle/MsgBody/ListEntry/HudPopup`: a challenge arriving as
+an alert with a message, a list entry and a HUD popup, a reusable pattern), free-roam
+challenges (`CFreeRoamChallengeState`, `IDS_ChallengeAvailable`, `IDS_EndChallenge`,
+`IDS_SetHighlightedChallenge`) and, for online free roam, `IDS_NoChallengeHost` /
+`IDS_NoChallengeClient`: the original online free roam had host-started challenges.
+
 ## Likely building blocks
 
 1. A self-hosted server that emulates Xbox LIVE sessions and presence plus Turn 10's

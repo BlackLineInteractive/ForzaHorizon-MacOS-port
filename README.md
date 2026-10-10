@@ -76,18 +76,30 @@ ninja -C forza-recomp/out/build/linux
 ## Playing
 
 ```sh
-tools/play.sh              # play (log: ~/.local/share/forza/forza.log)
-tools/run_forza.sh 120     # a two-minute test run; logs in ${XDG_RUNTIME_DIR:-/tmp}/forza_run
+tools/play.sh                 # play with your own profile (~/.local/share/forza)
+tools/play.sh --xenia         # continue your Xenia Canary save (a copy; see below)
+tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR:-/tmp}/forza_run
 ```
 
-- **Controller:** any SDL-supported pad. Keyboard emulation of a pad is available with
-  `--mnk_mode=true` (bindings: the SDK's `keybind_*` settings; not tested yet).
+- **Profile and controllers:** the game runs signed in to one local profile on player 1,
+  and every connected controller drives player 1, so START on any pad gets you past the
+  title screen (with Steam Input or Sunshine virtual pads around, your pad is often not
+  the first one, and the game used to ask that pad to sign in).
+  `FORZA_PAD_PER_USER=1` gives each pad its own player again.
+- **Keyboard:** the SDK's keyboard emulation of a pad is available with `--mnk_mode=true`
+  (bindings: the SDK's `keybind_*` settings; not tested yet).
 - **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
   once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`.
-- **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`. Forza ties its save
-  to the profile's XUID: to continue a save from Xenia, copy Xenia's
-  `content/<XUID>/4D5309C9` folder there and start with `--profile_xuid=<XUID>` (or put
-  `profile_xuid = "<XUID>"` in `forza.toml` next to the executable).
+- **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`.
+- **Your Xenia save:** `tools/play.sh --xenia` copies your Xenia Canary profile's Forza
+  Horizon save (`~/xenia_canary_windows/content/<XUID>/4D5309C9`, or
+  `$FORZA_XENIA_CONTENT/<XUID>/4D5309C9`) into `~/.local/share/forza/xenia-<XUID>/` and
+  plays it signed in with that XUID: Forza ties its save to the profile's XUID, and
+  refuses (freezes on the title screen) a save made under another one. The copy is made
+  once, so progress made here stays in it; `--xenia-refresh` copies the Xenia save again.
+  The Xenia original is never modified. With several Xenia profiles, name one:
+  `tools/play.sh --xenia E030000004B490FA`. (Equivalent by hand: copy the save under the
+  runtime's profile folder and start with `--profile_xuid=<XUID>`.)
 
 ## Legal
 

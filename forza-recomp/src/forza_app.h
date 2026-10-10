@@ -4,21 +4,27 @@
 
 #pragma once
 
+#include "debug/frame_stats.h"
+#include "platform/achievement_toast.h"
+#include "platform/vulkan_hooks.h"
+
 #include <rex/filesystem/devices/host_path_device.h>
 #include <rex/filesystem/vfs.h>
 #include <rex/logging.h>
 #include <rex/rex_app.h>
 #include <rex/runtime.h>
+#include <rex/system/gpu_plugin.h>
+#include <rex/ui/overlay/achievement_notification.h>
 
 #include <filesystem>
 #include <string>
 
 namespace forza {
 void InstallFaultGuard();  // src/debug/fault_guard.cpp
-namespace perf {
-void Flush();  // src/debug/frame_stats.cpp
-}  // namespace perf
 }  // namespace forza
+
+// SDK settings with this game's defaults (src/main.cpp).
+void ApplyForzaCvarDefaults();
 
 class ForzaApp : public rex::ReXApp {
  public:
@@ -30,10 +36,40 @@ class ForzaApp : public rex::ReXApp {
         PPCImageConfig));
   }
 
+  // Runs after forza.toml and the command line are applied, before the window opens.
+  void OnPostInitLogging() override { ApplyForzaCvarDefaults(); }
+
   void OnPreSetup(rex::RuntimeConfig& config) override {
     if (!config.graphics && config.gpu_plugin.empty()) {
       config.gpu_plugin = "xenos";
     }
+    // Loaded here rather than by the SDK so OnCreateDialogs can reach the GPU provider.
+    if (!config.graphics && !config.gpu_plugin.empty()) {
+      config.graphics = rex::system::LoadGpuPlugin(config.gpu_plugin);
+    }
+    graphics_ = config.graphics.get();
+  }
+
+  // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
+  // calls (swapchain present-mode log, RECOMP_PERF timing; src/platform/vulkan_hooks.h).
+  void OnCreateDialogs(rex::ui::ImGuiDrawer*) override { forza::InstallVulkanHooks(graphics_); }
+
+  void OnPostSetup() override { forza::InstallVulkanHooks(runtime()->graphics_system()); }
+
+  // The SDK's achievement toasts, registered with the ImGui drawer only while one shows, so
+  // the window is not repainted nonstop (src/platform/achievement_toast.h; from
+  // RecompiledHaloReach).
+  std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog()
+      override {
+    return forza::MakeOnDemandToast(rex::ReXApp::CreateAchievementNotificationDialog(),
+                                    imgui_drawer(), app_context());
+  }
+
+  // The SDK hard-exits right after a close request is accepted (SIGINT included), so the
+  // frame statistics summary is written here.
+  bool OnWindowCloseRequested() override {
+    forza::perf::Shutdown();
+    return true;
   }
 
   // The game keeps ghost and replay streams on the console's utility partition
@@ -56,12 +92,11 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
-  void OnShutdown() override { forza::perf::Flush(); }
-
   // Override virtual hooks for customization:
-  // void OnPostInitLogging() override {}
   // void OnLoadXexImage(std::string& xex_image) override {}
   // void OnPostLoadXexImage() override {}
-  // void OnPostSetup() override {}
   // void OnConfigurePaths(rex::PathConfig& paths) override {}
+
+ private:
+  rex::system::IGraphicsSystem* graphics_ = nullptr;
 };

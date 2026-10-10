@@ -1,216 +1,247 @@
-// forza - frame-time statistics (RECOMP_PERF=1), with the same definitions as
-// RecompiledHaloReach so the two projects compare.
-//
-// Every 10 s window, when the scene changes and at exit, one line per frame source:
-//
-//   PERF: scene=<name> src=<guest|present> t=<s> fps= p50= p95= p99= max= low1= stutters=
-//         hitches= ontarget= pipelines=
-//
-// - src=guest: the game's frames (VdSwap calls); src=present: frames the host presented
-//   (counted by the patched GPU plugin, patches/rexglue-sdk/0024, when it has the hook;
-//   the SDK skips presenting frames that drew with a placeholder shader).
-// - p50/p95/p99/max: frame time in ms; low1 = 1000 / mean of the slowest 1% of frame
-//   times; stutters = frames longer than 2x the window's p50; hitches = frames longer
-//   than 100 ms; ontarget = % of frames within +-20% of 33.3 ms (the game's 30 fps);
-//   pipelines = graphics pipelines the GPU plugin created in the window (its "Creating
-//   graphics pipeline state" log lines, placeholders included).
-//
-// RECOMP_PERF_SCENE=<name> labels the first scene ("boot" otherwise); "SCENE:<name>" on
-// the input FIFO (FORZA_AUTOPRESS_FIFO) starts a new one. RECOMP_PERF_CSV=<path> also
-// writes every frame: src,scene,t_s,frame_ms.
+// forza - frame-time statistics; see frame_stats.h and docs/perf.md.
 
 #include "frame_stats.h"
 
 #include <rex/logging.h>
-#include <rex/logging/api.h>
-
-#include <spdlog/sinks/base_sink.h>
-
-#ifndef _WIN32
-#include <dlfcn.h>
-#endif
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <mutex>
+#include <numeric>
 #include <string>
 #include <vector>
 
 namespace forza::perf {
-
 namespace {
 
 using Clock = std::chrono::steady_clock;
+
 constexpr double kWindowSeconds = 10.0;
-constexpr double kTargetMs = 1000.0 / 30.0;
+constexpr double kTargetMs = 1000.0 / 30.0;  // Forza Horizon runs at 30 fps
+constexpr double kHitchMs = 100.0;
 
-bool Enabled() {
-  static const bool on = [] {
-    const char* v = std::getenv("RECOMP_PERF");
-    return v && *v && *v != '0';
-  }();
-  return on;
+struct Config {
+  bool enabled = false;
+  std::string scene = "default";
+  std::string reset_path;
+  std::FILE* csv = nullptr;
+};
+
+bool EnvSet(const char* name) {
+  const char* v = std::getenv(name);
+  return v && *v && *v != '0';
 }
 
-std::atomic<uint64_t> pipelines_created{0};
-
-// Counts pipeline creations from the GPU plugin's log lines.
-class PipelineCountSink : public spdlog::sinks::base_sink<std::mutex> {
- protected:
-  void sink_it_(const spdlog::details::log_msg& msg) override {
-    static constexpr char kNeedle[] = "Creating graphics pipeline state";
-    const auto& text = msg.payload;
-    if (text.size() >= sizeof(kNeedle) - 1 &&
-        std::memcmp(text.data(), kNeedle, sizeof(kNeedle) - 1) == 0) {
-      ++pipelines_created;
+Config& GetConfig() {
+  static Config config = [] {
+    Config c;
+    c.enabled = EnvSet("RECOMP_PERF");
+    if (!c.enabled) return c;
+    if (const char* v = std::getenv("RECOMP_PERF_SCENE"); v && *v) c.scene = v;
+    if (const char* v = std::getenv("RECOMP_PERF_RESET"); v && *v) c.reset_path = v;
+    if (const char* v = std::getenv("RECOMP_PERF_CSV"); v && *v) {
+      c.csv = std::fopen(v, "w");
+      if (c.csv) {
+        std::fputs("scene,src,t,ms\n", c.csv);
+      } else {
+        REXLOG_WARN("PERF: cannot write {}", v);
+      }
     }
-  }
-  void flush_() override {}
-};
-
-struct Source {
-  const char* name;
-  bool seen = false;
-  Clock::time_point last{};
-  std::vector<double> frame_ms;  // frame times in the current window
-};
-
-struct State {
-  std::mutex mutex;
-  std::string scene;
-  Clock::time_point start = Clock::now();
-  Clock::time_point window_start = start;
-  uint64_t window_pipelines = 0;
-  Source guest{"guest"}, present{"present"};
-  FILE* csv = nullptr;
-};
-
-State& Get() {
-  static State* state = [] {
-    auto* s = new State;
-    const char* scene = std::getenv("RECOMP_PERF_SCENE");
-    s->scene = scene && *scene ? scene : "boot";
-    if (const char* path = std::getenv("RECOMP_PERF_CSV"); path && *path) {
-      s->csv = std::fopen(path, "w");
-      if (s->csv) std::fprintf(s->csv, "src,scene,t_s,frame_ms\n");
-    }
-    rex::AddSink(std::make_shared<PipelineCountSink>());
-    return s;
+    REXLOG_INFO("PERF: frame statistics on (scene={}{}{})", c.scene, c.csv ? ", CSV" : "",
+                c.reset_path.empty() ? "" : ", reset trigger");
+    return c;
   }();
-  return *state;
+  return config;
 }
 
-double Percentile(const std::vector<double>& sorted, double p) {
-  if (sorted.empty()) return 0;
-  const size_t i = std::min(sorted.size() - 1, size_t(p * double(sorted.size() - 1) + 0.5));
-  return sorted[i];
+std::mutex& CsvMutex() {
+  static std::mutex mutex;
+  return mutex;
 }
 
-void LogSource(State& s, Source& src, double window_s, uint64_t pipelines) {
-  if (!src.seen) return;
-  std::vector<double> v = src.frame_ms;
-  std::sort(v.begin(), v.end());
-  const size_t n = v.size();
-  const double p50 = Percentile(v, 0.50);
-  size_t stutters = 0, hitches = 0, on_target = 0;
-  for (double ms : v) {
-    if (ms > 2 * p50) ++stutters;
-    if (ms > 100) ++hitches;
-    if (ms >= kTargetMs * 0.8 && ms <= kTargetMs * 1.2) ++on_target;
-  }
+void WriteCsv(const char* src, double t, float ms) {
+  Config& config = GetConfig();
+  std::lock_guard lock(CsvMutex());
+  if (config.csv) std::fprintf(config.csv, "%s,%s,%.4f,%.3f\n", config.scene.c_str(), src, t, ms);
+}
+
+void FlushCsv() {
+  Config& config = GetConfig();
+  std::lock_guard lock(CsvMutex());
+  if (config.csv) std::fflush(config.csv);
+}
+
+std::atomic<uint64_t> g_pipelines{0};
+
+// Seconds since the first timed event.
+double Seconds(Clock::time_point now) {
+  static const Clock::time_point start = now;
+  return std::chrono::duration<double>(now - start).count();
+}
+
+struct Stats {
+  double fps, p50, p95, p99, max, low1, ontarget;
+  uint32_t stutters, hitches;
+};
+
+Stats Compute(std::vector<float> ms) {
+  Stats s{};
+  if (ms.empty()) return s;
+  std::sort(ms.begin(), ms.end());
+  const size_t n = ms.size();
+  auto pct = [&](double p) {
+    size_t rank = size_t(std::ceil(p / 100.0 * double(n)));
+    return double(ms[std::clamp<size_t>(rank, 1, n) - 1]);
+  };
+  const double sum = std::accumulate(ms.begin(), ms.end(), 0.0);
+  s.fps = sum > 0 ? 1000.0 * double(n) / sum : 0;
+  s.p50 = pct(50);
+  s.p95 = pct(95);
+  s.p99 = pct(99);
+  s.max = ms.back();
   const size_t slow = std::max<size_t>(1, n / 100);
-  double slow_sum = 0;
-  for (size_t i = 0; i < slow && i < n; ++i) slow_sum += v[n - 1 - i];
-  const double low1 = n ? 1000.0 / (slow_sum / double(std::min(slow, n))) : 0;
-  const double t = std::chrono::duration<double>(Clock::now() - s.start).count();
-  REXLOG_INFO(
-      "PERF: scene={} src={} t={:.0f} fps={:.1f} p50={:.1f} p95={:.1f} p99={:.1f} max={:.1f} "
-      "low1={:.1f} stutters={} hitches={} ontarget={:.0f} pipelines={}",
-      s.scene, src.name, t, window_s > 0 ? double(n) / window_s : 0.0, p50, Percentile(v, 0.95),
-      Percentile(v, 0.99), n ? v.back() : 0.0, low1, stutters, hitches,
-      n ? 100.0 * double(on_target) / double(n) : 0.0, pipelines);
-}
-
-// Logs and resets the current window. Caller holds the mutex.
-void CloseWindow(State& s, Clock::time_point now) {
-  const double window_s = std::chrono::duration<double>(now - s.window_start).count();
-  const uint64_t total_pipelines = pipelines_created.load();
-  const uint64_t pipelines = total_pipelines - s.window_pipelines;
-  if (window_s > 0.5) {
-    LogSource(s, s.guest, window_s, pipelines);
-    LogSource(s, s.present, window_s, pipelines);
+  const double slow_mean = std::accumulate(ms.end() - slow, ms.end(), 0.0) / double(slow);
+  s.low1 = slow_mean > 0 ? 1000.0 / slow_mean : 0;
+  uint32_t on_target = 0;
+  for (float f : ms) {
+    if (f > 2.0 * s.p50) ++s.stutters;
+    if (f > kHitchMs) ++s.hitches;
+    if (std::abs(f - kTargetMs) <= 0.2 * kTargetMs) ++on_target;
   }
-  s.guest.frame_ms.clear();
-  s.present.frame_ms.clear();
-  s.window_start = now;
-  s.window_pipelines = total_pipelines;
-  if (s.csv) std::fflush(s.csv);
+  s.ontarget = 100.0 * on_target / double(n);
+  return s;
 }
 
-void OnFrame(Source State::*which) {
-  if (!Enabled()) return;
-  State& s = Get();
-  const auto now = Clock::now();
-  std::lock_guard<std::mutex> lock(s.mutex);
-  Source& src = s.*which;
-  if (src.seen) {
-    const double ms = std::chrono::duration<double, std::milli>(now - src.last).count();
-    src.frame_ms.push_back(ms);
-    if (s.csv) {
-      std::fprintf(s.csv, "%s,%s,%.3f,%.3f\n", src.name, s.scene.c_str(),
-                   std::chrono::duration<double>(now - s.start).count(), ms);
+class Stream {
+ public:
+  explicit Stream(const char* name) : name_(name) {}
+
+  void OnFrame(Clock::time_point now) {
+    const double t = Seconds(now);
+    std::lock_guard lock(mutex_);
+    if (!has_last_) {
+      has_last_ = true;
+      last_ = now;
+      window_start_ = total_start_ = t;
+      window_pipelines_ = total_pipelines_ = g_pipelines.load();
+      return;
+    }
+    const float ms = std::chrono::duration<float, std::milli>(now - last_).count();
+    last_ = now;
+    window_.push_back(ms);
+    total_.push_back(ms);
+    WriteCsv(name_, t, ms);
+    if (t - window_start_ >= kWindowSeconds) {
+      const uint64_t pipelines = g_pipelines.load();
+      Log(window_, t, pipelines - window_pipelines_, "");
+      window_.clear();
+      window_start_ = t;
+      window_pipelines_ = pipelines;
+      FlushCsv();
     }
   }
-  src.seen = true;
-  src.last = now;
-  if (std::chrono::duration<double>(now - s.window_start).count() >= kWindowSeconds) {
-    CloseWindow(s, now);
+
+  void Reset(double t) {
+    std::lock_guard lock(mutex_);
+    total_.clear();
+    total_start_ = t;
+    total_pipelines_ = g_pipelines.load();
   }
+
+  void Summarize(double t) {
+    std::lock_guard lock(mutex_);
+    if (total_.empty()) return;
+    char tail[64];
+    std::snprintf(tail, sizeof(tail), " final=1 from=%.1f", total_start_);
+    Log(total_, t, g_pipelines.load() - total_pipelines_, tail);
+  }
+
+ private:
+  void Log(const std::vector<float>& ms, double t, uint64_t pipelines, const char* tail) {
+    const Stats s = Compute(ms);
+    REXLOG_INFO(
+        "PERF: scene={} src={} t={:.1f} fps={:.1f} p50={:.1f} p95={:.1f} p99={:.1f} max={:.1f} "
+        "low1={:.1f} stutters={} hitches={} ontarget={:.1f} pipelines={}{}",
+        GetConfig().scene, name_, t, s.fps, s.p50, s.p95, s.p99, s.max, s.low1, s.stutters,
+        s.hitches, s.ontarget, pipelines, tail);
+  }
+
+  const char* name_;
+  std::mutex mutex_;
+  bool has_last_ = false;
+  Clock::time_point last_;
+  double window_start_ = 0, total_start_ = 0;
+  uint64_t window_pipelines_ = 0, total_pipelines_ = 0;
+  std::vector<float> window_;  // frame times (ms) of the current 10 s window
+  std::vector<float> total_;   // since the start or the last reset
+};
+
+Stream& Guest() {
+  static Stream stream("guest");
+  return stream;
 }
 
-void PresentCallback() { OnFrame(&State::present); }
+Stream& Present() {
+  static Stream stream("present");
+  return stream;
+}
 
 }  // namespace
 
+bool Enabled() { return GetConfig().enabled; }
+
 void OnGuestFrame() {
-  static std::once_flag hook_once;
   if (!Enabled()) return;
-  std::call_once(hook_once, [] {
-#ifndef _WIN32
-    // The patched plugin (0024) calls this back on every host present.
-    using SetHook = void (*)(void (*)());
-    void* plugin = dlopen("librexgpu-xenos.so", RTLD_NOW | RTLD_NOLOAD);
-    auto set = plugin ? reinterpret_cast<SetHook>(dlsym(plugin, "rexgpu_set_present_hook"))
-                      : nullptr;
-    if (set) {
-      set(PresentCallback);
-    } else {
-      REXLOG_INFO("PERF: the GPU plugin has no present hook; only guest frames are measured");
-    }
-#endif
-  });
-  OnFrame(&State::guest);
+  const Clock::time_point now = Clock::now();
+  Guest().OnFrame(now);
+  // The reset trigger is polled every 10 guest frames.
+  static int polls = 0;
+  const Config& config = GetConfig();
+  if (!config.reset_path.empty() && ++polls % 10 == 0 &&
+      std::remove(config.reset_path.c_str()) == 0) {
+    const double t = Seconds(now);
+    Guest().Reset(t);
+    Present().Reset(t);
+    REXLOG_INFO("PERF: summary restarted at t={:.1f}", t);
+  }
 }
 
-void SetScene(const std::string& scene) {
-  if (!Enabled()) return;
-  State& s = Get();
-  std::lock_guard<std::mutex> lock(s.mutex);
-  CloseWindow(s, Clock::now());
-  s.scene = scene;
-  REXLOG_INFO("PERF: scene={}", scene);
+void OnHostPresent() {
+  if (Enabled()) Present().OnFrame(Clock::now());
 }
 
-void Flush() {
+void OnPipelinesCreated(uint32_t count) { g_pipelines.fetch_add(count); }
+
+void SetScene(const std::string& name) {
   if (!Enabled()) return;
-  State& s = Get();
-  std::lock_guard<std::mutex> lock(s.mutex);
-  CloseWindow(s, Clock::now());
+  const double t = Seconds(Clock::now());
+  Guest().Summarize(t);
+  Present().Summarize(t);
+  Guest().Reset(t);
+  Present().Reset(t);
+  {
+    std::lock_guard lock(CsvMutex());
+    GetConfig().scene = name;
+  }
+  REXLOG_INFO("PERF: scene={} from t={:.1f}", name, t);
+}
+
+void Shutdown() {
+  static std::atomic<bool> done{false};
+  if (!Enabled() || done.exchange(true)) return;
+  const double t = Seconds(Clock::now());
+  Guest().Summarize(t);
+  Present().Summarize(t);
+  Config& config = GetConfig();
+  std::lock_guard lock(CsvMutex());
+  if (config.csv) {
+    std::fclose(config.csv);
+    config.csv = nullptr;
+  }
 }
 
 }  // namespace forza::perf

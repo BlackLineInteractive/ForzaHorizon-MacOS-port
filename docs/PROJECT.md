@@ -184,6 +184,30 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     migration between threads (`FORZA_FIBERTRACE=1`: the game switches fibers once).
     Open.
 
+- 2026-10-10 (evening): **any controller gets past the title screen; Xenia saves from
+  `play.sh`; perf tooling from Reach.**
+  - The user was stuck at the title screen: the runtime signs in one profile, on user 0,
+    and gives every SDL pad its own user slot in connection order. With Steam Input and
+    Sunshine virtual pads present, the user's pad was not slot 0, so START came from an
+    unsigned user and the game waited for a sign-in nobody could give (reproduced with
+    `FORZA_PAD_PER_USER=1` and a scripted press on slot 1: `PAD1:START` on the input FIFO).
+    `src/kernel/input_autopress.cpp` now merges every pad into user 0 (buttons combined,
+    strongest stick/trigger wins, vibration to all) and reports users 1-3 as without a
+    controller: START on a slot-1 or slot-2 pad reaches the first-run screen and the main
+    menu from a fresh data folder.
+  - `tools/play.sh --xenia [XUID]` plays a copy of the user's Xenia save signed in with
+    its XUID (`~/.local/share/forza/xenia-<XUID>/`, DLC and shader cache shared).
+  - Frame statistics, Vulkan hooks (present-mode log, present and pipeline counts), the
+    FIFO present-mode default and the on-demand achievement toast (the SDK's toast kept
+    the UI thread repainting nonstop) ported from RecompiledHaloReach. SDK patch 0024
+    (a presenter hook) is gone again: the Vulkan hooks do it without an SDK change.
+  - Diagnostics for the physics fault: the item index that overruns `sub_82D3DB00`'s
+    array is the low byte of the w lane of a 16-byte closest-point result
+    (`sub_82D44B90` r1+384/+400, written whole by `sub_82D41F28` from GJK vertices with
+    `vmaddfp`/`vsel`); in failing runs that lane holds pointers or 0xBEBEBEBE fill, i.e.
+    the vertex data's w lanes carry garbage. Next: who writes the vertex records
+    (r3+0x1AA0 + id*32 in the solver workspace).
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.

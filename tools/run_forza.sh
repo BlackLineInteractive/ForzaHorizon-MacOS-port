@@ -20,6 +20,8 @@ SECS="${1:-60}"
 shift || true
 RUN="${FORZA_RUN_DIR:-${XDG_RUNTIME_DIR:-/tmp}/forza_run}"
 mkdir -p "$RUN"
+. "$ROOT/tools/bench_lock.sh"
+bench_lock_check || exit 3
 avail_gb=$(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo)
 if [ "${FORZA_IGNORE_MEM:-0}" != 1 ] && [ "$avail_gb" -lt 10 ]; then
     echo "only ${avail_gb} GB of memory available; not starting (FORZA_IGNORE_MEM=1 overrides)" >&2
