@@ -45,7 +45,7 @@ recompiled C++ is generated from your copy on your machine and never committed h
 | Audio | The game produces sound (measured, not listened to yet) |
 | Saves | Saved and loaded; Xenia saves load with `profile_xuid` set to the Xenia profile's XUID |
 | DLC | All 23 packages install with `tools/install_dlc.py` and are mounted by the game |
-| Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold, party lobby with a hosted party session; title services (XP) not answered yet |
+| Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold; two players in one party, online free roam and an online race (Invite Friends, then Create Custom Game); matchmaking (Find Game) and title services (XP) not yet |
 | Windows | Not yet |
 
 ## Requirements
@@ -102,9 +102,13 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   `FORZA_SERVER=host[:port]` (or `live_server = "host:port"` in `forza.toml` next to the
   binary). Your online identity (XUID, gamertag: your login name unless
   `FORZA_GAMERTAG` is set) is kept in `~/.local/share/forza/4D5309C9/live_identity.txt`.
-  Everyone in the server's room is your friend. Turn 10's title services are not
-  emulated yet, so the party lobby says the Horizon server is unavailable (no XP for
-  online games).
+  Everyone in the server's room is your friend. To play together: everyone opens
+  Multiplayer; one player picks Invite Friends in the party lobby (there is no Guide, so
+  this invites everyone in the room) and the others join that party on their own
+  (`live_accept_invites`). The party leader then picks Create Custom Game, sets the game
+  type under Setup Game (Free Roam, races, ...), saves the setup (YES) and starts once
+  the others are ready. Turn 10's title services are not emulated yet, so the party
+  lobby says the Horizon server is unavailable (no XP for online games).
 - **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
   once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`.
 - **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`.

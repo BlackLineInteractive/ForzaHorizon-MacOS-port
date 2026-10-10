@@ -23,6 +23,8 @@
 // - XInviteSend / XInviteGetAcceptedInfo (0xFC/0x50002, 0x58023): "Invite to Party"
 //   goes through the server to the friend, whose game accepts it (live_accept_invites)
 //   and joins our session.
+// - XamShowFriendsUI / XamShowGameInviteUI: there is no Guide; opening it invites every
+//   other player in the room (the party lobby's "Invite Friends").
 // - XNetLogonGetTitleID / XNetLogonGetMachineID: the SDK stubs return garbage.
 // - XUserReadStats (0xFB/0xB0021): leaderboard rows with a new player's defaults; the
 //   SDK left the results empty and Forza crashed creating its party session.
@@ -963,6 +965,40 @@ extern "C" REX_FUNC(__imp__XMsgStartIORequest) {
 extern "C" REX_FUNC(__imp__XMsgStartIORequestEx) {
   static GuestFunc sdk = Sdk("__imp__XMsgStartIORequestEx");
   StartIORequest("XMsgStartIORequestEx", sdk, ctx, base);
+}
+
+namespace {
+// The Guide's friends list and game invite UI: there is no Guide, so opening it invites
+// every other player in our room on the server to the session a friend should join
+// (InviteSession: the newest joinable session we host, else the one we joined). Forza's
+// party lobby "Invite Friends" calls XamShowFriendsUI (the player picks friends in the
+// Guide, which sends the invites); the friend's game accepts (live_accept_invites).
+uint32_t InviteRoom(const char* from) {
+  uint8_t session[kSessionInfoSize];
+  if (!forza::LiveSignin() || !InviteSession(session)) {
+    REXLOG_INFO("FORZA_LIVE: {}: no session to invite friends to", from);
+    return 0;
+  }
+  uint32_t sent = 0;
+  for (const auto& f : forza::LiveRoster()) {
+    if (!f.xuid) continue;
+    forza::LiveSendInvite(f.xuid, session);
+    ++sent;
+  }
+  REXLOG_INFO("FORZA_LIVE: {}: invited {} players to session {:016X}", from, sent,
+              SessionId(session));
+  return 0;  // ERROR_SUCCESS
+}
+}  // namespace
+
+// DWORD XamShowFriendsUI(DWORD user_index)
+extern "C" REX_FUNC(__imp__XamShowFriendsUI) {
+  ctx.r3.u64 = InviteRoom("XamShowFriendsUI");
+}
+
+// DWORD XamShowGameInviteUI(DWORD user_index, const XUID* recipients, DWORD count, text)
+extern "C" REX_FUNC(__imp__XamShowGameInviteUI) {
+  ctx.r3.u64 = InviteRoom("XamShowGameInviteUI");
 }
 
 namespace forza {

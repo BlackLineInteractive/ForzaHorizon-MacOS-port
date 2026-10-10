@@ -258,16 +258,9 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     `sub_826B4200` (lobby: DLC / Disc 2 / unknown) and by a content check
     (`sub_825A56E0` returning 4) before `0x8275C238`.
 - **Status and open items (end of 2026-10-10):**
-  - Xbox LIVE: signed in, Gold, party lobby works. In a two-instance test (DriverA,
-    DriverB, one local server) DriverB's "Find Custom Game" found no session, hosted a
-    matchmaking session (flags `0x2D`) and started an online race alone (0/3 laps,
-    place 1/1, no crash); DriverA's scripted menu path ended back in the lobby. Not
-    done yet: both instances in one online free-roam session (next: A "Create Custom
-    Game" -> free roam, then B "Find Custom Game", or A "Invite Friends" -> B, which
-    auto-accepts with `live_accept_invites`); Turn 10's "Xls" title services (the game
-    made no title-server request yet even with the `*` description; next: see why
-    `sub_83155238` is not reached or fails); a second server-search path if Forza's
-    custom-game search uses properties other than Reach's hopper id.
+  - Xbox LIVE: signed in, Gold; two players in one party, online free roam and an online
+    race work (see "two players online" below). Open: matchmaking ("Find Game", "Find
+    Custom Game") and Turn 10's "Xls" title services (XP), which come together.
   - MISSING CONTENT: not reproduced (see above). Next: the user's exact flow with
     `--xenia` and the place it shows; log `sub_825A56E0`'s result and the content id.
   - Free-roam physics crash (`sub_82D3DB00`): fixed, see the next entry.
@@ -331,6 +324,50 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     (`gjk_dot_overflow.cpp`, `FORZA_GJK_DOT_INF`) is gone.
   - `tools/repro_freeroam.sh` (the user's Xenia save): 10 of 10 loads ran free roam without a
     fault (29.8-30.0 fps at 175 s), with the codegen fix alone.
+
+- 2026-10-10 (night, later): **two players online: one party, online free roam and an
+  online race, each seeing the other's car.**
+  - The last two-instance test misread the menus: one scripted DOWN (0.3 s hold) moves
+    the lobby cursor two rows, so DriverB had picked "Create Custom Game", not "Find Custom
+    Game" (`DOWN:0.1` moves one row). Neither instance ever searched for a session.
+  - "Invite Friends" in the party lobby calls `XamShowFriendsUI` (the Guide's friends
+    list; the player sends invites from there), an SDK stub. `live_xmsg.cpp` now answers
+    `XamShowFriendsUI` and `XamShowGameInviteUI` by inviting every other player in the
+    server room to the session a friend should join (`InviteSession`). The rest was
+    already there: the invitee's game auto-accepts (`live_accept_invites`), takes the
+    session from `XInviteGetAcceptedInfo`, leaves its own party (`XSessionLeave`), looks
+    the host up (`XNetQosLookup`, from the host's presence), joins the party session
+    (`XSessionCreate` without the host flag, `XSessionJoin`) and the two talk directly
+    (UDP 2130x on one machine, "direct path to player").
+  - Test (two `tools/play.sh` instances, DriverA and DriverB, a private server on UDP
+    21220 / HTTP 21221, fresh profiles): both open Multiplayer; A: Invite Friends ->
+    both party lobbies list DriverA and DriverB, B shows "Please wait while the party host
+    selects a race". A: Create Custom Game (a "Private Custom Circuit Race" with both
+    players), Setup Game, Game Type -> Free Roam (sixth step right), B (back) -> "save
+    now?" YES (NO drops the changes), Start Free Roam; B: Ready. Both load online free
+    roam at the festival ("Co-op challenges"; host: "select a co-op challenge from the
+    pause menu", B: "waiting for host"), with DriverA and DriverB in the HUD list. A sees
+    B's car with its "1 DriverB" tag driving up, B sees A's. The host's game session has
+    flags `0x2D` (host, stats, matchmaking, peer network); B joins it on its own (it
+    hears of it through the party), both call `XSessionStart`. Peer traffic is about 65
+    datagrams/s each way in free roam. Second test: a 1-lap Circuit Race (Beaumont
+    Circuit) from the same lobby: both on the grid, each seeing the other's car, racing
+    (A 2nd in a Fiat 500, B 1st in a Nissan Skyline). No faults in either test.
+  - Matchmaking and title services: "Find Game" / "Find Custom Game" depend on Turn 10's
+    hopper services (`ForzaHopperGetList`, `ForzaHopperGetSearchSettings`,
+    `ForzaHopperGetSessionListFilterSettings`, `ForzaHopperReportQosData`; the lobby has
+    `IDS_LobbyLspUnavailableDefaultHopper` for when they are down). The title-server
+    choice was misread before: `sub_83155238` calls `Matches(mask, description)`
+    (`sub_83153D48`, logged as `Matches("%s", "%s") == %d`) with the game's service mask
+    as the pattern (`*`, `?`, case-insensitive; the config's `defaultMask` is `Turn10.*`)
+    and our description as the text, so the description `*` never matches and the
+    enumeration fails with `0x8054001F` every 30 s. A description such as
+    `Turn10.Horizon` (`FORZA_LSP_SERVICES`) should make the game connect (port 80,
+    `/Services.Horizon/o.xtsw` per the LspProvider config) and send its first requests.
+  - Next: set the description and record the requests (`--dump-requests`); then answer
+    the hopper calls in Turn 10's `bin/xtsw` format (unknown yet) so that "Find Custom
+    Game" searches and players can find each other without an invite; join in progress
+    from the friends list (presence) is untested.
 
 ## Debugging recipes
 
