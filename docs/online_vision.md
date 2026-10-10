@@ -23,6 +23,26 @@ free roam:
 - The game's own online pre-race lobby and countdown are the likely base for this; notes
   on them go under Findings.
 
+## Backlog: player-to-player head-to-head challenges
+
+After the game runs smoothly without crashes and the shared-world server puts everyone
+in the same world (not before):
+
+- In single player, Forza Horizon lets you drive up behind certain road drivers and
+  press a button to challenge them to a quick race along a route. Online, the same
+  should work between players.
+- In the shared world, a player drives up behind another player's car and presses X:
+  that sends a challenge request. It is not instant: the challenged player gets a prompt
+  and can accept or reject, with a timeout when there is no answer.
+- If accepted, a route is set up from where they are, like the single-player
+  head-to-head, and the race starts for both. A reject or a timeout is reported back to
+  the challenger.
+
+To note while reversing: how the single-player head-to-head is triggered (the
+proximity/behind check, the button prompt), how its route is generated or picked,
+whether the original online free roam had any player-vs-player challenge, and which UI
+prompts (accept/reject dialogs) the game already has that could be reused.
+
 ## Likely building blocks
 
 1. A self-hosted server that emulates Xbox LIVE sessions and presence plus Turn 10's
@@ -64,5 +84,30 @@ Open questions, to fill in as the reverse engineering finds them:
   or later") and the rewards (points, credits). Before the start the pre-race menu
   offers START RACE / DIFFICULTY / OPTIONS / QUIT RACE: the AI difficulty is chosen
   per race there, a natural place to set it from the human share.
+- The multiplayer game types are data-driven presets, and they already know about AI
+  opponents. Field names next to each other in `.rdata` (`0x8202C2A0`..`0x8202C900`):
+  `CarRestrictions`, `MaxPlayers`, `MinPlayers`, `CanStartEndOfRaceCountdown`,
+  `ScoringMethod`, `NumPlayers`, `NumPlayerBuckets`, `CollisionMode`,
+  `DamageDifficulty`, `UseTraffic`, `GameTypePreset`, `StartingGridOptions`,
+  `FieldWindowOptions`, `EndConditionOptions`, `MaxRecommendedCarClass`,
+  `MinRecommendedCarClass`, `DraftingEnabled`, `AIDifficulty`, `AIFieldId`,
+  `MaxAIPlayers`. Code reading them: `sub_82605F80` and `sub_82606318` (`MaxPlayers`,
+  `NumPlayers`), `sub_8260A4D8` (`MaxPlayers`, `AIDifficulty`). `MaxAIPlayers` and
+  `AIFieldId` suggest the engine can already fill an online grid with AI; the vision's
+  "fill free slots with AI" may only need the preset values changed.
+- AI difficulty data lives in the game database (SQL queries in `.rdata`):
+  `SELECT * FROM MPAIDifficultyMap` (with `AISkill`, `AITemperament`; loaded in
+  `sub_825704D8`), `SELECT SkillModifier,AggroModifier, RubberBandModifier FROM
+  AIPlayers WHERE Id=%u`, per-event columns `AISkill%s`/`AITemperament%s`/
+  `AIRubberband%s` (`SELECT %s,%s,%s FROM Events WHERE Id = %u`), and
+  `SELECT * FROM EventRestrictions WHERE EventId=%d` for the event conditions. The
+  single-player levels are Easy/Medium/Hard/Pro (`IDS_AIDifficulty_*`) with
+  `EasyDifficultyUpperBound`..`ProDifficultyUpperBound` and `DynamicDifficulty`
+  (`sub_82521200`). An MPAIDifficultyMap row picked from the human share is the
+  obvious hook for the 1/3, 1/2, 2/3 rule.
+- Free roam online: strings `onlinefreeroam`, `SET_MODE_FREEROAM` (`sub_825E0C60`),
+  `CIsFreeRoamSessionOver` (`sub_825B3968`), and the message "... player's console as
+  the session is full." `SELECT CarsPerUniverse FROM Tracks WHERE Id='%d'` may bound
+  the number of cars per world.
 - XAM app 0xFE message `0x2B003` is sent once when the single-player game starts
   (Xenia answers success, "Games used in: 4D5309C9").

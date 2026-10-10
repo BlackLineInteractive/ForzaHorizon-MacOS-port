@@ -10,11 +10,19 @@
 // This handler is installed after the runtime's, so it only sees faults nobody took.
 // It logs the fault once with the host call stack as module+offset (resolve with
 // `addr2line -f -e forza-recomp/out/build/linux/forza 0xOFFSET`; frames in sub_XXXXXXXX
-// are the recompiled guest functions) and then aborts (core dump), unless FORZA_FAULT=wait,
-// which parks the thread so gdb can attach (gdb -p PID, then `thread apply all bt`).
+// are the recompiled guest functions) and exits with status 134. No core dump: one of a
+// process mapping 5+ GB of guest memory takes minutes and gigabytes. FORZA_FAULT=wait
+// parks the thread instead, so gdb can attach (gdb -p PID, then `thread apply all bt`).
+
+#include "../platform/guest_memory.h"
 
 #include <rex/exception_handler.h>
 #include <rex/logging.h>
+#include <rex/ppc/context.h>
+#include <rex/system/kernel_state.h>
+#include <rex/system/thread_state.h>
+#include <rex/system/xmemory.h>
+#include <rex/system/xthread.h>
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -57,6 +65,39 @@ void LogStack() {
 #endif
 }
 
+uint32_t Load32(const uint8_t* p) { return uint32_t(p[0]) << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+
+// The guest registers of the faulting thread (as last stored in its PPCContext: values
+// the recompiled code keeps in host registers may be newer) and its guest call chain
+// from the stack back-chain (saved LR at back chain - 8).
+void LogGuestState() {
+  if (!rex::system::XThread::IsInThread()) return;
+  auto* thread = rex::system::XThread::GetCurrentThread();
+  auto* state = thread ? thread->thread_state() : nullptr;
+  PPCContext* ctx = state ? state->context() : nullptr;
+  auto* kernel = rex::system::kernel_state();
+  if (!ctx || !kernel) return;
+  uint8_t* base = kernel->memory()->virtual_membase();
+  std::string regs;
+  for (int i = 0; i < 32; ++i) {
+    regs += fmt::format("{}r{}={:08X}", i % 8 ? " " : (i ? "\n    " : "    "), i,
+                        (&ctx->r0)[i].u32);
+  }
+  REXLOG_ERROR("Guest thread {:08X} registers (lr={:08X} ctr={:08X}):\n{}",
+               thread->handle(), uint32_t(ctx->lr), ctx->ctr.u32, regs);
+  std::string chain;
+  uint32_t frame = ctx->r1.u32;
+  for (int i = 0; i < 24 && frame; ++i) {
+    const uint32_t parent = Load32(forza::GuestPtr(base, frame));
+    if (parent <= frame || parent - frame > 0x100000 || (parent & 7)) break;
+    const uint32_t lr = Load32(forza::GuestPtr(base, parent - 8));
+    if (lr < 0x82000000 || lr >= 0x90000000) break;
+    chain += fmt::format(" {:08X}", lr);
+    frame = parent;
+  }
+  REXLOG_ERROR("Guest call chain (return addresses):{}", chain);
+}
+
 bool OnUnhandledFault(rex::arch::Exception* ex, void* /*data*/) {
   using Code = rex::arch::Exception::Code;
   if (ex->code() == Code::kAccessViolation) {
@@ -73,11 +114,12 @@ bool OnUnhandledFault(rex::arch::Exception* ex, void* /*data*/) {
     REXLOG_CRITICAL("Unhandled illegal instruction (trap) at pc 0x{:X}", ex->pc());
   }
   LogStack();
+  LogGuestState();
   if (Wait()) {
     REXLOG_CRITICAL("FORZA_FAULT=wait: thread parked for a debugger");
     for (;;) std::this_thread::sleep_for(std::chrono::hours(1));
   }
-  std::abort();
+  std::_Exit(134);
 }
 
 }  // namespace

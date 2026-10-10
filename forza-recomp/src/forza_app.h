@@ -15,6 +15,9 @@
 
 namespace forza {
 void InstallFaultGuard();  // src/debug/fault_guard.cpp
+namespace perf {
+void Flush();  // src/debug/frame_stats.cpp
+}  // namespace perf
 }  // namespace forza
 
 class ForzaApp : public rex::ReXApp {
@@ -53,11 +56,12 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
+  void OnShutdown() override { forza::perf::Flush(); }
+
   // Override virtual hooks for customization:
   // void OnPostInitLogging() override {}
   // void OnLoadXexImage(std::string& xex_image) override {}
   // void OnPostLoadXexImage() override {}
   // void OnPostSetup() override {}
-  // void OnShutdown() override {}
   // void OnConfigurePaths(rex::PathConfig& paths) override {}
 };

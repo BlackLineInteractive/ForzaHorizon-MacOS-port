@@ -164,7 +164,25 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     (module+offset) and aborts, instead of re-running the faulting instruction forever.
     One run with the copied save hit a null read (`read of guest 0x00000000` on one
     thread, logged 1.6 million times: 260 MB in a minute) 30 s after entering single
-    player; the next identical run did not. Not reproduced since.
+    player; the next identical run did not.
+  - That fault, chased with a repeat script (copy the Xenia save, START, Single Player,
+    watch for 110 s): it hits in roughly half the runs, always while free roam loads
+    around the saved position, never in the prologue. Two forms: a read of guest
+    `0x0000000F` and a write of guest `0x701F0120`, both under `sub_82D3DB00` (called
+    from `sub_82D44B90` <- `sub_82D42638` <- `sub_82D43818` <- `sub_82D4D9D0`/
+    `sub_82D4DCC8`), the loader of world physics/collision definitions (strings
+    `PhysicsDefinition`, `ConvexHull`, `BreakSpeedMph`...). `sub_82D3DB00` keeps an
+    array of at most 8 records of 544 bytes in its 4544-byte frame and fills one per
+    entry of a 12-byte record chosen by its index argument (`*(r3+84) + index*12`,
+    count byte at +9, list pointer at +4). The bad runs read a count above 8 or a
+    pointer of 0xF there: the record is garbage, and the loop writes past the frame,
+    through the thread's PCR (`r13` = `0x701EE890`) up to the end of the stack at
+    `0x701F0000`. So the input is not ready or not what the game expects when it is
+    read; the timing dependence points at synchronization (a race the console's timing
+    hides, or an emulated primitive that misbehaves). Ruled out: the critical-section
+    replacement (it faults with `FORZA_SDK_CRITICAL_SECTIONS=1` too) and fiber
+    migration between threads (`FORZA_FIBERTRACE=1`: the game switches fibers once).
+    Open.
 
 ## Debugging recipes
 

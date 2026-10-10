@@ -47,6 +47,8 @@ set(FORZA_SOURCES
     src/main.cpp
     src/debug/audio_level.cpp
     src/debug/fault_guard.cpp
+    src/debug/fiber_trace.cpp
+    src/debug/frame_stats.cpp
     src/debug/frame_dump.cpp
     src/kernel/critical_section.cpp
     src/kernel/file_delete_on_close.cpp

@@ -81,7 +81,7 @@ tools/run_forza.sh 120     # a two-minute test run; logs in ${XDG_RUNTIME_DIR:-/
 ```
 
 - **Controller:** any SDL-supported pad. Keyboard emulation of a pad is available with
-  `--mnk_mode=true` (bindings: the SDK's `keybind_*` settings).
+  `--mnk_mode=true` (bindings: the SDK's `keybind_*` settings; not tested yet).
 - **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
   once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`.
 - **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`. Forza ties its save

@@ -12,10 +12,12 @@
 // (create it with mkfifo) while the game runs and presses each one as it
 // arrives, so menus can be stepped through while watching frame dumps
 // (FORZA_FRAMEDUMP_TRIGGER). In either mode the game sees a connected, centred
-// controller between presses instead of a disconnected one.
+// controller between presses instead of a disconnected one. "SCENE:<name>" lines label
+// the frame statistics (RECOMP_PERF, src/debug/frame_stats.cpp).
 
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
+#include "../debug/frame_stats.h"
 
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
@@ -144,6 +146,11 @@ void ReadFifo(std::string path, std::vector<Press>* schedule,
       continue;
     }
     double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (line.rfind("SCENE:", 0) == 0) {  // frame statistics label (debug/frame_stats.cpp)
+      forza::perf::SetScene(line.substr(6));
+      line.clear();
+      continue;
+    }
     std::vector<Press> parsed = ParseSchedule(("0:" + line).c_str());
     for (Press& press : parsed) {
       press.at_seconds = now;
