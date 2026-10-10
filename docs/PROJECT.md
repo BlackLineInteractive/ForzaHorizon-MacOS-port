@@ -207,6 +207,79 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     `vmaddfp`/`vsel`); in failing runs that lane holds pointers or 0xBEBEBEBE fill, i.e.
     the vertex data's w lanes carry garbage. Next: who writes the vertex records
     (r3+0x1AA0 + id*32 in the solver workspace).
+- 2026-10-10 (night): **Xbox LIVE through a Forza Live server; Gold; the party
+  lobby.** The user saw "You must have an Xbox LIVE Gold Membership" and "no connection
+  to Xbox LIVE" under Multiplayer.
+  - RecompiledHaloReach's Reach Live client is ported (`src/kernel/identity.cpp`,
+    `xam_signin.cpp`, `net.cpp`, `live_xmsg.cpp`, `live_tcp.cpp`, `live_lsp.cpp`,
+    `src/platform/socket.*`) with its server (`server/forza_live_server.py`, UDP 21200 and
+    HTTP 21201; Reach Live keeps 21100/21101, and an instance of each game can run side by
+    side). `tools/play.sh` starts a local server unless `FORZA_SERVER` or `live_server`
+    names one (`--offline`: none). The game signs in to LIVE as user 0 with an online XUID
+    (`0009...`, kept in `<data>/forza/4D5309C9/live_identity.txt`) while the save stays
+    tied to the offline XUID.
+  - Gold, always (`xam_signin.cpp`): `XamUserCheckPrivilege` grants everything,
+    `XamUserGetMembershipTier[FromXUID]` is Gold, sign-in state 2 with the LIVE flag.
+  - Entering Multiplayer then crashed (read of guest `0xC` in `sub_82CA41C8`). Two causes:
+    - `XUserReadStats` (XGI `0xB0021`): the SDK answers success and leaves the results
+      empty; the game reads its TrueSkill row (column 0 as an int64, two doubles: mu and
+      sigma) through the empty view list right after creating the party session.
+      `live_xmsg.cpp` now writes a row per player and view with a new player's defaults
+      (skill 1, mu 3.0, sigma 1.0, other columns null).
+    - The session socket: Forza's session networking (`0x8313xxxx`-`0x8315xxxx`) opens a
+      VDP socket, binds it, reads its port with `getsockname` (an SDK stub), and keeps an
+      overlapped `WSARecvFrom` posted on it (`sub_83143C40`; `WSA_IO_PENDING` hands the
+      OVERLAPPED to an I/O object that waits on its event, `sub_831425C8` collects it
+      with `WSAGetOverlappedResult`). The SDK's `WSARecvFrom` always fails, so the socket
+      was closed again at once. `net.cpp` now does overlapped receives on the virtual
+      sockets (pending receives complete when a datagram arrives: buffers, sender,
+      OVERLAPPED status and byte count, then its event), `WSAGetOverlappedResult`,
+      `WSACancelOverlappedIO`, `WSAEventSelect`, `WSASendTo`/`WSASend` (gathered,
+      completed at once), `getsockname`, `getsockopt` (it probes `SO_RCVBUF` first),
+      `getpeername`. The game's Winsock wrappers are at `0x82A628C8`-`0x82A62B88`.
+  - Multiplayer now opens the PARTY LOBBY (Find Game, Find Custom Game, Create Custom
+    Game, Difficulty, Invite Friends) with the player listed and a hosted party session
+    (flags `0x823`: host, presence, peer network, friends join via presence).
+  - "The Horizon server is currently unavailable, you will not be awarded XP for online
+    multiplayer games": Turn 10's title services. The game enumerates title servers
+    every 30 s and keeps one whose description matches the service name it wants
+    (wildcards `*`/`?`, `sub_83153D48` called from `sub_83155238`); it talks "Xls Client"
+    HTTP/1.1 to it (`POST /Services/o.xtsw`, `Content-Type: bin/xtsw`, `X-TitleId`,
+    `X-ClassName`, `X-Method`, `X-UserId`, `X-TransactionId` headers). Our title server
+    is now described as `*`, so every service resolves to the Forza Live server, whose
+    `forza_live_lsp.py` logs the requests.
+  - MISSING CONTENT: not reproduced in the user's flow (main menu, Multiplayer) with all
+    23 DLC packages installed. The license path was checked: each DLC's license mask
+    comes from `XContentCreateEx` (`sub_825166xx`, the package header written by
+    `tools/install_dlc.py`: all bits) and feeds `UPDATE ContentOffers SET IsInstalled=1,
+    IsPurchased=(LicenseMask & %u)=LicenseMask` (`sub_825162D0`); the only
+    `XamContentGetLicenseMask` caller (`sub_82C01748`) ignores the mask, so the SDK's
+    `license_mask` setting does not matter here. The messages are chosen in
+    `sub_826B4200` (lobby: DLC / Disc 2 / unknown) and by a content check
+    (`sub_825A56E0` returning 4) before `0x8275C238`.
+- **Status and open items (end of 2026-10-10):**
+  - Xbox LIVE: signed in, Gold, party lobby works. In a two-instance test (DriverA,
+    DriverB, one local server) DriverB's "Find Custom Game" found no session, hosted a
+    matchmaking session (flags `0x2D`) and started an online race alone (0/3 laps,
+    place 1/1, no crash); DriverA's scripted menu path ended back in the lobby. Not
+    done yet: both instances in one online free-roam session (next: A "Create Custom
+    Game" -> free roam, then B "Find Custom Game", or A "Invite Friends" -> B, which
+    auto-accepts with `live_accept_invites`); Turn 10's "Xls" title services (the game
+    made no title-server request yet even with the `*` description; next: see why
+    `sub_83155238` is not reached or fails); a second server-search path if Forza's
+    custom-game search uses properties other than Reach's hopper id.
+  - MISSING CONTENT: not reproduced (see above). Next: the user's exact flow with
+    `--xenia` and the place it shows; log `sub_825A56E0`'s result and the content id.
+  - Free-roam physics crash (`sub_82D3DB00`): open, see above. Next: find the writer of
+    the GJK vertex records; the generated C++ carries VMX128 disassembly as comments,
+    which objdump cannot decode.
+  - Performance: no clean-window numbers yet (docs/perf.md has contended ones only).
+  - Frame-rate unlock: xenia-canary/game-patches has no frame-rate patch for this game.
+    Cheapest experiment: `--video_mode_refresh_rate=120` (the SDK's guest vblank rate;
+    the game presents every second vblank, so 60 fps if it keeps up) and check whether
+    the game runs faster than real time (fixed per-frame step) by comparing the speed
+    reached after N seconds of throttle at 60 and 120 Hz. `--vsync=false` (1 kHz vblank)
+    unlocks completely. Not run yet.
 
 ## Debugging recipes
 

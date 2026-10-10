@@ -45,6 +45,7 @@ recompiled C++ is generated from your copy on your machine and never committed h
 | Audio | The game produces sound (measured, not listened to yet) |
 | Saves | Saved and loaded; Xenia saves load with `profile_xuid` set to the Xenia profile's XUID |
 | DLC | All 23 packages install with `tools/install_dlc.py` and are mounted by the game |
+| Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold, party lobby with a hosted party session; title services (XP) not answered yet |
 | Windows | Not yet |
 
 ## Requirements
@@ -78,6 +79,7 @@ ninja -C forza-recomp/out/build/linux
 ```sh
 tools/play.sh                 # play with your own profile (~/.local/share/forza)
 tools/play.sh --xenia         # continue your Xenia Canary save (a copy; see below)
+tools/play.sh --offline       # without Xbox LIVE
 tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR:-/tmp}/forza_run
 ```
 
@@ -88,6 +90,18 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   `FORZA_PAD_PER_USER=1` gives each pad its own player again.
 - **Keyboard:** the SDK's keyboard emulation of a pad is available with `--mnk_mode=true`
   (bindings: the SDK's `keybind_*` settings; not tested yet).
+- **Xbox LIVE:** the game signs in to an emulated Xbox LIVE, as a Gold member, through a
+  Forza Live server (`server/forza_live_server.py`, Python 3 standard library only).
+  `play.sh` starts one on this machine for the session (UDP 21200, HTTP 21201, data in
+  `~/.local/share/forza/live_server/`), or uses the one already running there. To play
+  with others, run the server where everyone can reach it
+  (`python3 server/forza_live_server.py --http-port 21201`) and start the game with
+  `FORZA_SERVER=host[:port]` (or `live_server = "host:port"` in `forza.toml` next to the
+  binary). Your online identity (XUID, gamertag: your login name unless
+  `FORZA_GAMERTAG` is set) is kept in `~/.local/share/forza/4D5309C9/live_identity.txt`.
+  Everyone in the server's room is your friend. Turn 10's title services are not
+  emulated yet, so the party lobby says the Horizon server is unavailable (no XP for
+  online games).
 - **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
   once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`.
 - **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`.
