@@ -29,6 +29,8 @@ for shm in /dev/shm/xenia_memory_*; do
     [ -O "$shm" ] || continue
     grep -qs "$(basename "$shm")" /proc/[0-9]*/maps || rm -f -- "$shm"
 done
+# The runtime appends to its log; keep one previous run.
+[ -f "$DIR/forza.log" ] && mv -f "$DIR/forza.log" "$DIR/forza.prev.log"
 mkfifo "$DIR/in.fifo"
 DEFAULT_SDK="$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64"
 [ -d "$DEFAULT_SDK/lib" ] || DEFAULT_SDK="$HOME/rexglue-sdk-patched/0.10.0.24/linux-amd64"

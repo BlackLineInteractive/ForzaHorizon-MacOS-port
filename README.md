@@ -39,8 +39,9 @@ recompiled C++ is generated from your copy on your machine and never committed h
 | Codegen of `default.xex` + 2 DLLs | Done (76,788 functions, 248 MB of C++) |
 | Linux build (Clang) | Builds and links |
 | Boot, intro video, title screen, main menu | Work, render correctly with the patched GPU plugin |
-| Opening drive (in-engine) | Renders and drives with a pad (only tested briefly) |
-| Audio | Not verified |
+| Opening drive (in-engine) | Renders and drives with a pad at 30 fps (only tested for a few minutes) |
+| Audio | The game produces sound (measured, not listened to yet) |
+| Saves | The profile is saved and loaded |
 | DLC | Not yet |
 | Windows | Not yet |
 

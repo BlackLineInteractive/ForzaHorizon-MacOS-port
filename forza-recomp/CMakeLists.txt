@@ -45,12 +45,14 @@ endif()
 # Sources
 set(FORZA_SOURCES
     src/main.cpp
+    src/debug/audio_level.cpp
     src/debug/frame_dump.cpp
     src/kernel/critical_section.cpp
     src/kernel/file_delete_on_close.cpp
     src/kernel/file_size_refresh.cpp
     src/kernel/input_autopress.cpp
     src/kernel/xam_enumerate.cpp
+    src/kernel/xam_nui.cpp
     src/kernel/xecrypt_rsa.cpp
     src/platform/sdk_import.cpp
 )

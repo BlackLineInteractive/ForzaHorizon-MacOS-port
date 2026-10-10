@@ -125,6 +125,23 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     "log spam in Forza Horizon 1/2"); `XamXStudioRequest` stub logged 33 times a second
     (Xenia also gets it, 314k calls in the user's log); audio not verified.
 
+- 2026-10-10 (afternoon): **the opening drive plays at 30 fps with sound.**
+  - Own SDK clone and overlay (`~/rexglue-sdk-src-forza`, `~/rexglue-sdk-patched-forza`)
+    with patch 0023: an empty resolve region is a no-op, as in Xenia, which changed it
+    for Forza Horizon. It was logged twice per resolve, about 180 lines a second
+    (`Resolve region is empty` + `PM4_DRAW_INDX_2(3, 8, 2): Failed in backend`).
+  - `src/kernel/xam_nui.cpp`: Kinect and XAM answers as in Xenia:
+    `XamNuiGetDeviceStatus` returns 0xC0050006 (no Kinect; the SDK returned nothing),
+    `XamXStudioRequest` (polled every 30 ms) is left unanswered without a warning per
+    call, XAM app 0xFE message 0x2B003 succeeds.
+  - Title screen and the drive run at a steady 29.5-30 fps (`FORZA_FPSLOG=1`); the
+    drive was held at full throttle for two minutes (89 mph on the road, then into the
+    woods) without errors. Audio frames carry sound (`FORZA_AUDIOLOG=1`: RMS 0.01-0.04
+    during the intro and menus). Saves: the profile (`ForzaProfile`) is written under
+    `~/.local/share/forza/<xuid>/4D5309C9/00000001/`; the second run skips the first-run
+    screen.
+  - Online vision (design only, for later): `docs/online_vision.md`.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.
@@ -132,6 +149,10 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
   `tools/live_session.sh DIR` + `tools/live_step.sh DIR WAIT INPUT...` (input FIFO,
   screenshot `DIR/shot.png` through `FORZA_SCREENSHOT_TRIGGER`). Headless frame dumps come
   out all zero (seen in Reach); check rendering with screenshots from a windowed run.
+- `FORZA_FPSLOG=1` logs the frame rate every 5 s; `FORZA_AUDIOLOG=1` the peak/RMS of the
+  audio the game submits (non-zero means it makes sound).
+- `tools/xrefs.py ADDR` lists branches, lis/addi pairs and data words pointing at an
+  address (a quick stand-in for Ghidra's xrefs).
 - Kernel imports can be overridden from `src/` by defining `extern "C" REX_FUNC(__imp__Name)`;
   `forza::SdkImport("__imp__Name")` finds the SDK's original. Guest pointers in hand-written
   code: always `forza::GuestPtr(base, addr)` (Windows maps 0xE0000000+ 4 KB further on).

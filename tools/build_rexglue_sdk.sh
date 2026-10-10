@@ -17,6 +17,7 @@
 #   REXSDK_NIGHTLY  installed nightly SDK the overlay is based on
 #                   (default ~/rexglue-sdk-nightly/0.10.0.24/linux-amd64)
 #   REXSDK_SRC      source checkout (default ~/rexglue-sdk-src-forza/sdk)
+#   REXSDK_JOBS     parallel compile jobs (default 4; the build runs at nice 15)
 #   REXSDK_PATCHED  overlay prefix to create
 #                   (default ~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64)
 #
@@ -76,7 +77,8 @@ if [ -d "$BREW/opt/xorgproto/include" ]; then
                  "-DCMAKE_SHARED_LINKER_FLAGS=-L$BREW/lib")
 fi
 ( cd "$SRC" && cmake --preset linux-amd64 "${cmake_args[@]}" > /dev/null )
-cmake --build "$SRC/out/build/linux-amd64" --config Release --target rexgpu-xenos --parallel "$(nproc)"
+nice -n 15 cmake --build "$SRC/out/build/linux-amd64" --config Release --target rexgpu-xenos \
+    --parallel "${REXSDK_JOBS:-4}"
 
 built="$SRC/out/linux-amd64/Release/librexgpu-xenos.so"
 [ -n "$built" ] || { echo "librexgpu-xenos.so not found in the build tree" >&2; exit 1; }
