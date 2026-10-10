@@ -306,8 +306,9 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     returned before adding its first support point, and the closest points came from an
     empty simplex (`sub_82D41608` -> `sub_82D0F6E0`), their w lanes from vertex 0.
   - Fix: `src/hooks/gjk_dot_overflow.cpp` (`hints/gjk_dot_overflow.toml`), a hook right
-    after that `vmsum3fp128` that turns an overflow of finite inputs into QNaN.
-    `FORZA_GJK_DOT_INF=1` brings the infinity back. The general fix belongs in the SDK's
+    after that `vmsum3fp128` that turns an overflow of finite inputs into QNaN
+    (superseded by SDK patch 0025 the same night, see below; the hook is gone).
+    `FORZA_GJK_DOT_INF=1` brought the infinity back. The general fix belongs in the SDK's
     codegen (`build_vmsum3fp128`/`build_vmsum4fp128` in `sdk/src/codegen/builders/vector.cpp`
     emit a bare `simde_mm_dp_ps`); not done here, because it needs a codegen build and a
     rebuild of all generated code. Other dot products in the game may rely on the same
@@ -317,6 +318,19 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     ("about half" over the earlier runs); with seeding, 3 of 3. After: 10 of 10 loaded and
     ran free roam without a fault (each ~2 minutes in, 30 fps, the Aventador on the road
     in a screenshot); with seeding, 2 of 2.
+- 2026-10-10 (late night, later): **every dot product now overflows to QNaN, in the codegen
+  (SDK patch 0025, shared with RecompiledHaloReach).**
+  - `build_vmsum3fp128`/`build_vmsum4fp128` keep `dpps` and branch on the exponent of its
+    result; a non-finite result is redone as Xenia's `DOT_PRODUCT_3/4` (float64 products and
+    sums, in Xenia's order): an overflow of finite inputs is QNaN `0x7FC00000`, infinities
+    and NaNs from the inputs pass through. 2883 sites in this game. Reported upstream as
+    rexglue/rexglue-sdk#491, with new cases in the SDK's PPC tests (all 1468 pass).
+  - `tools/build_rexglue_sdk.sh` now also builds `rexglue` into the overlay's `bin/`, and
+    the build runs codegen with it (`FORZA_REXGLUE`); a changed tool drops codegen's
+    stamps, so the next build regenerates everything. The GJK hook
+    (`gjk_dot_overflow.cpp`, `FORZA_GJK_DOT_INF`) is gone.
+  - `tools/repro_freeroam.sh` (the user's Xenia save): 10 of 10 loads ran free roam without a
+    fault (29.8-30.0 fps at 175 s), with the codegen fix alone.
 
 ## Debugging recipes
 

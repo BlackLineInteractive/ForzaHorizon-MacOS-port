@@ -7,8 +7,9 @@
 // sits after the count is loaded and logs the record, the table and the object the first
 // times the count is out of range, so a later run can watch who writes them.
 // FORZA_PHYS_SEED=1 also fills the never-written w lanes of the GJK simplex and EPA vertex
-// slots with sentinels naming the slot (the fault's cause was such a slot, see
-// gjk_dot_overflow.cpp), so reading one is caught every time.
+// slots with sentinels naming the slot (the fault's cause was such a slot: the GJK stopped
+// before adding a vertex because a dot product overflowed to infinity instead of Xenon's
+// QNaN; SDK patch 0025 fixed that in the codegen), so reading one is caught every time.
 
 #include "../platform/guest_memory.h"
 

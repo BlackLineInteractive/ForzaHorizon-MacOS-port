@@ -65,10 +65,13 @@ recompiled C++ is generated from your copy on your machine and never committed h
 # 1. The ReXGlue SDK nightly, unpacked to ~/rexglue-sdk-nightly/0.10.0.24/linux-amd64
 # 2. The game files, extracted from your Games on Demand package (only read)
 python3 tools/xcontent_extract.py /path/to/4D5309C9/00007000/<name> extract extracted/game
-# 3. The patched Xenos GPU plugin (clones the SDK to ~/rexglue-sdk-src-forza, applies
-#    patches/rexglue-sdk/ and installs an overlay at ~/rexglue-sdk-patched-forza)
+# 3. The patched Xenos GPU plugin and codegen tool (clones the SDK to ~/rexglue-sdk-src-forza,
+#    applies patches/rexglue-sdk/ and installs an overlay at ~/rexglue-sdk-patched-forza;
+#    the stock rexglue's dot products overflow to infinity, Xenon's to QNaN, and free roam
+#    crashes without it)
 tools/build_rexglue_sdk.sh
-# 4. Configure (the first configure runs codegen, about a minute) and build
+# 4. Configure (the first configure runs codegen with the overlay's rexglue, about a
+#    minute) and build
 cmake -S forza-recomp -B forza-recomp/out/build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH=$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64
 ninja -C forza-recomp/out/build/linux

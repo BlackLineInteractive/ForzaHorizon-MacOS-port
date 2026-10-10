@@ -16,6 +16,12 @@ if(FORZA_SKIP_CODEGEN AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/defa
     message(FATAL_ERROR "FORZA_SKIP_CODEGEN is on but generated/default has no codegen output")
 endif()
 
+# Codegen runs the patched SDK overlay's rexglue when there is one: tools/build_rexglue_sdk.sh
+# builds it from patches/rexglue-sdk/, and some patches change the generated code (0025:
+# Xenon's dot products give QNaN on overflow, which the collision GJK depends on).
+set(FORZA_REXGLUE "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/bin/rexglue"
+    CACHE FILEPATH "Patched rexglue to run codegen with instead of the SDK's")
+
 # generated/rexglue.cmake lists the generated sources at configure time, so on a fresh
 # checkout (no generated/default yet) codegen runs here once; otherwise the first build
 # would run it but compile none of its output.
@@ -23,6 +29,9 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT REXSDK_DIR AND
    NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/sources.cmake")
     find_package(rexglue 0.10.0 REQUIRED CONFIG)
     get_target_property(_rexglue rex::rexglue LOCATION)
+    if(EXISTS "${FORZA_REXGLUE}")
+        set(_rexglue "${FORZA_REXGLUE}")
+    endif()
     message(STATUS "First configure: running codegen (${_rexglue}), this takes a while")
     execute_process(
         COMMAND "${_rexglue}" codegen "${CMAKE_CURRENT_SOURCE_DIR}/forza_manifest.toml"
@@ -40,6 +49,20 @@ if((CMAKE_CROSSCOMPILING OR FORZA_SKIP_CODEGEN) AND TARGET rex::rexglue)
     set_target_properties(rex::rexglue PROPERTIES
         IMPORTED_LOCATION /usr/bin/true IMPORTED_LOCATION_RELEASE /usr/bin/true)
     message(STATUS "Codegen is skipped: compiling generated/ as it is")
+elseif(TARGET rex::rexglue AND EXISTS "${FORZA_REXGLUE}")
+    get_target_property(_configs rex::rexglue IMPORTED_CONFIGURATIONS)
+    set_target_properties(rex::rexglue PROPERTIES IMPORTED_LOCATION "${FORZA_REXGLUE}")
+    foreach(_config IN LISTS _configs)
+        set_target_properties(rex::rexglue PROPERTIES
+            IMPORTED_LOCATION_${_config} "${FORZA_REXGLUE}")
+    endforeach()
+    # A new tool reruns codegen (its depfile lists only the inputs).
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.build.stamp"
+        APPEND DEPENDS "${FORZA_REXGLUE}")
+    message(STATUS "Codegen tool: ${FORZA_REXGLUE}")
+elseif(TARGET rex::rexglue)
+    message(WARNING "Patched rexglue not found at ${FORZA_REXGLUE}; codegen uses the SDK's, "
+                    "whose dot products differ from Xenon's. Run tools/build_rexglue_sdk.sh.")
 endif()
 
 # Sources
@@ -52,7 +75,6 @@ set(FORZA_SOURCES
     src/debug/frame_stats.cpp
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
-    src/hooks/gjk_dot_overflow.cpp
     src/hooks/physics_loader_check.cpp
     src/kernel/critical_section.cpp
     src/kernel/file_delete_on_close.cpp

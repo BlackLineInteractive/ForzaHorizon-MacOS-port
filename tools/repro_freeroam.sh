@@ -8,7 +8,7 @@
 #   at 45 s and A (Single Player) at 57 s, then watches the log for up to 2 minutes for an
 #   unhandled fault or a PHYSCHECK line (src/hooks/physics_loader_check.cpp). Prints one
 #   line per run; faulting logs are kept as WORKDIR/LABEL_fault_N.log.
-#   Environment (FORZA_PHYS_SEED, FORZA_GJK_DOT_INF, ...) passes through to the game. Link
+#   Environment (FORZA_PHYS_SEED, ...) passes through to the game. Link
 #   WORKDIR/ud/0000000000000000 to the installed DLC (<data>/0000000000000000) beforehand
 #   if the save needs it. Kills only the processes it started.
 # Written for the free-roam physics fault (docs/PROJECT.md).
