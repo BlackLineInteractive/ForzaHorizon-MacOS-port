@@ -52,6 +52,7 @@ set(FORZA_SOURCES
     src/debug/frame_stats.cpp
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
+    src/hooks/gjk_dot_overflow.cpp
     src/hooks/physics_loader_check.cpp
     src/kernel/critical_section.cpp
     src/kernel/file_delete_on_close.cpp

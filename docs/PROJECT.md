@@ -182,7 +182,7 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     hides, or an emulated primitive that misbehaves). Ruled out: the critical-section
     replacement (it faults with `FORZA_SDK_CRITICAL_SECTIONS=1` too) and fiber
     migration between threads (`FORZA_FIBERTRACE=1`: the game switches fibers once).
-    Open.
+    Fixed later the same day (Xenon dot-product overflow, see below).
 
 - 2026-10-10 (evening): **any controller gets past the title screen; Xenia saves from
   `play.sh`; perf tooling from Reach.**
@@ -270,9 +270,7 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     custom-game search uses properties other than Reach's hopper id.
   - MISSING CONTENT: not reproduced (see above). Next: the user's exact flow with
     `--xenia` and the place it shows; log `sub_825A56E0`'s result and the content id.
-  - Free-roam physics crash (`sub_82D3DB00`): open, see above. Next: find the writer of
-    the GJK vertex records; the generated C++ carries VMX128 disassembly as comments,
-    which objdump cannot decode.
+  - Free-roam physics crash (`sub_82D3DB00`): fixed, see the next entry.
   - Performance: no clean-window numbers yet (docs/perf.md has contended ones only).
   - Frame-rate unlock: xenia-canary/game-patches has no frame-rate patch for this game.
     Cheapest experiment: `--video_mode_refresh_rate=120` (the SDK's guest vblank rate;
@@ -280,6 +278,45 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     the game runs faster than real time (fixed per-frame step) by comparing the speed
     reached after N seconds of throttle at 60 and 120 Hz. `--vsync=false` (1 kHz vblank)
     unlocks completely. Not run yet.
+
+- 2026-10-10 (late night): **the free-roam physics fault is fixed: Xenon's dot product
+  returns QNaN on overflow.**
+  - Not the SDK bug RecompiledHaloReach found the same day (ObDereferenceObject on an
+    XEnumerate task's X_KENUMERATOR, which has no dispatcher header, releases whatever
+    object took its stale handle, running threads included). A port of Reach's
+    `object_refs.cpp` in trace mode logged no dereference of an object the runtime does not
+    own in 3 loads, 2 of which faulted. Forza has the same XAPI code (XEnumerate
+    `sub_830EC788`, task body `sub_830EC680`), but this flow does not run it; the port was
+    not kept.
+  - The bad item indices come from a GJK simplex vertex that was never written.
+    `FORZA_PHYS_SEED=1` (new hooks in `src/hooks/physics_loader_check.cpp`: before each
+    query, fill the w lanes of the EPA workspace's 30 vertex slots and of each new simplex's
+    four vertices with sentinels naming the slot) made the fault hit 3 of 3 runs, always
+    with simplex vertex 0's sentinels (`+396 CCCC00C0 +412 BBBB00C0`). Without seeding that
+    slot holds whatever an earlier call left on the stack (0xBEBEBEBE is the SDK's fill of
+    a new thread stack, 0x82B8D9C0 a function pointer), so it faulted only when that
+    leftover made a large index.
+  - Why: the GJK (`sub_82D43290`) starts a new pair with the estimate v = splat(-FLT_MAX)
+    (`sub_82D12178`) and the previous squared distance (FLT_MAX, -FLT_MAX, 0, 0)
+    (`sub_82D41210`). Its termination test (`sub_82D420F0`) computes |v|^2 with
+    `vmsum3fp128` at `0x82D42120` and stops when FLT_EPSILON * previous >= previous - |v|^2
+    in every lane. 3 * FLT_MAX^2 overflows. Xenon's VMX128 dot products return QNaN on
+    overflow (Xenia emulates this, see its `use_fast_dot_product` option), which makes the
+    test false. The codegen's SSE `dpps` returns +infinity, so the test passed, GJK
+    returned before adding its first support point, and the closest points came from an
+    empty simplex (`sub_82D41608` -> `sub_82D0F6E0`), their w lanes from vertex 0.
+  - Fix: `src/hooks/gjk_dot_overflow.cpp` (`hints/gjk_dot_overflow.toml`), a hook right
+    after that `vmsum3fp128` that turns an overflow of finite inputs into QNaN.
+    `FORZA_GJK_DOT_INF=1` brings the infinity back. The general fix belongs in the SDK's
+    codegen (`build_vmsum3fp128`/`build_vmsum4fp128` in `sdk/src/codegen/builders/vector.cpp`
+    emit a bare `simde_mm_dp_ps`); not done here, because it needs a codegen build and a
+    rebuild of all generated code. Other dot products in the game may rely on the same
+    overflow result.
+  - Measured with a repeat script (now `tools/repro_freeroam.sh`; the user's Xenia save, START, Single Player,
+    up to 2 minutes of free roam): before, 2 of 3 loads faulted
+    ("about half" over the earlier runs); with seeding, 3 of 3. After: 10 of 10 loaded and
+    ran free roam without a fault (each ~2 minutes in, 30 fps, the Aventador on the road
+    in a screenshot); with seeding, 2 of 2.
 
 ## Debugging recipes
 
@@ -299,6 +336,10 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
   `~/xenia_canary_windows/content/E030000004B490FA/4D5309C9` into a scratch
   `<dir>/B13EBABEBABEBABE/`, symlink `<dir>/0000000000000000` to the installed DLC, run with
   `--user_data_root=<dir>` and `FORZA_XUID=E030000004B490FA`.
+- `tools/repro_freeroam.sh WORKDIR N` loads free roam from a fresh copy of the Xenia save
+  N times and reports faults (one game at a time). `FORZA_PHYS_SEED=1` fills never-written
+  GJK/EPA vertex slots with sentinels, so reading one faults every time instead of
+  sometimes.
 - `tools/xrefs.py ADDR` lists branches, lis/addi pairs and data words pointing at an
   address (a quick stand-in for Ghidra's xrefs).
 - Kernel imports can be overridden from `src/` by defining `extern "C" REX_FUNC(__imp__Name)`;

@@ -20,3 +20,20 @@ registers = ["r3"]
 address = 0x82D44FE4
 name = "ForzaCheckPhysicsIndices_82D44FE4"
 registers = ["r3"]
+
+# The EPA/GJK workspace (sub_82D41D48 initializes it on the caller's stack right before
+# sub_82D43E40) leaves its 30 vertex slots (+0x1AA0, 32 bytes: support point of A, then
+# of B, item index in each w lane) unwritten until a support point is added. Seed the w
+# lanes with a sentinel naming the slot, so an index that comes from a never-written slot
+# shows up as 0xEEEEssC0 / 0xDDDDssC0 in the check above.
+[[midasm_hook]]
+address = 0x82D43E40
+name = "ForzaSeedEpaSlots_82D43E40"
+registers = ["r3"]
+
+# Same for the GJK simplex (sub_82D12178 initializes it: flags at +144, its four 32-byte
+# vertices at +16 are left unwritten); EPA (sub_82D43D70) copies its first vertices.
+[[midasm_hook]]
+address = 0x82D12178
+name = "ForzaSeedSimplex_82D12178"
+registers = ["r3"]

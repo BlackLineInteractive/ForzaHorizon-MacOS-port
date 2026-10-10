@@ -1,0 +1,7 @@
+# Xenon's vmsum3fp128 returns QNaN on overflow; the GJK termination test relies on it on
+# a new pair's first iteration (src/hooks/gjk_dot_overflow.cpp, docs/PROJECT.md). The hook
+# runs after the vmsum3fp128 at 0x82D42120 in sub_82D420F0.
+[[midasm_hook]]
+address = 0x82D42124
+name = "ForzaGjkDotOverflow_82D42124"
+registers = ["r3"]

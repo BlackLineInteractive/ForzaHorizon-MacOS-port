@@ -6,6 +6,9 @@
 // pointer 0xF) and the loop runs past the frame. This hook (hints/physics_loader_check.toml)
 // sits after the count is loaded and logs the record, the table and the object the first
 // times the count is out of range, so a later run can watch who writes them.
+// FORZA_PHYS_SEED=1 also fills the never-written w lanes of the GJK simplex and EPA vertex
+// slots with sentinels naming the slot (the fault's cause was such a slot, see
+// gjk_dot_overflow.cpp), so reading one is caught every time.
 
 #include "../platform/guest_memory.h"
 
@@ -17,6 +20,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
 static_assert(offsetof(PPCContext, r3) == 0, "hooks recover ctx from &ctx.r3");
@@ -88,5 +92,28 @@ void ForzaCheckPhysicsIndices_82D44FE4(PPCRegister& r3) {
     if (n <= 5) {
       REXLOG_ERROR("PHYSCHECK: solver wrote large indices: +396 {:08X} +412 {:08X}", a, b);
     }
+  }
+}
+
+void ForzaSeedEpaSlots_82D43E40(PPCRegister& r3) {
+  static const bool on = std::getenv("FORZA_PHYS_SEED") != nullptr;
+  if (!on) return;
+  uint8_t* base = rex::system::kernel_state()->memory()->virtual_membase();
+  const uint32_t ws = r3.u32;
+  for (uint32_t slot = 0; slot < 30; ++slot) {
+    const uint32_t rec = ws + 0x1AA0 + slot * 32;
+    Store32(forza::GuestPtr(base, rec + 12), 0xEEEE00C0u | slot << 8);
+    Store32(forza::GuestPtr(base, rec + 28), 0xDDDD00C0u | slot << 8);
+  }
+}
+
+void ForzaSeedSimplex_82D12178(PPCRegister& r3) {
+  static const bool on = std::getenv("FORZA_PHYS_SEED") != nullptr;
+  if (!on) return;
+  uint8_t* base = rex::system::kernel_state()->memory()->virtual_membase();
+  for (uint32_t pos = 0; pos < 4; ++pos) {
+    const uint32_t v = r3.u32 + 16 + pos * 32;
+    Store32(forza::GuestPtr(base, v + 12), 0xCCCC00C0u | pos << 8);
+    Store32(forza::GuestPtr(base, v + 28), 0xBBBB00C0u | pos << 8);
   }
 }
