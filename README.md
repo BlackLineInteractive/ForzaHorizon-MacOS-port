@@ -5,8 +5,9 @@ original PowerPC executable to C++ with the [ReXGlue SDK](https://github.com/rex
 following the approach of [RecompiledHaloReach](https://github.com/Dyotson/RecompiledHaloReach).
 
 > **Status: early work in progress.** On Linux the game boots through the intro videos,
-> title screen and main menu into the opening drive (in-engine, with HUD, driveable).
-> Not tested beyond that yet.
+> title screen and main menu into the opening drive, free roam, festival events and
+> races, at 30 fps with sound, DLC and saves (including saves from Xenia). Only tested
+> for short sessions so far.
 
 This repository contains **no game code and no game data**. You need your own copy of the
 game (the Games on Demand / SVOD package of the base version, Title ID `4D5309C9`). The
@@ -39,10 +40,11 @@ recompiled C++ is generated from your copy on your machine and never committed h
 | Codegen of `default.xex` + 2 DLLs | Done (76,788 functions, 248 MB of C++) |
 | Linux build (Clang) | Builds and links |
 | Boot, intro video, title screen, main menu | Work, render correctly with the patched GPU plugin |
-| Opening drive (in-engine) | Renders and drives with a pad at 30 fps (only tested for a few minutes) |
+| Opening drive (in-engine) | Renders and drives with a pad at 30 fps |
+| Free roam, events, races | Work in short tests (a circuit race against 7 AI drivers) |
 | Audio | The game produces sound (measured, not listened to yet) |
-| Saves | The profile is saved and loaded |
-| DLC | Not yet |
+| Saves | Saved and loaded; Xenia saves load with `profile_xuid` set to the Xenia profile's XUID |
+| DLC | All 23 packages install with `tools/install_dlc.py` and are mounted by the game |
 | Windows | Not yet |
 
 ## Requirements
@@ -71,11 +73,21 @@ cmake -S forza-recomp -B forza-recomp/out/build/linux -G Ninja -DCMAKE_BUILD_TYP
 ninja -C forza-recomp/out/build/linux
 ```
 
-## Running
+## Playing
 
 ```sh
+tools/play.sh              # play (log: ~/.local/share/forza/forza.log)
 tools/run_forza.sh 120     # a two-minute test run; logs in ${XDG_RUNTIME_DIR:-/tmp}/forza_run
 ```
+
+- **Controller:** any SDL-supported pad. Keyboard emulation of a pad is available with
+  `--mnk_mode=true` (bindings: the SDK's `keybind_*` settings).
+- **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
+  once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`.
+- **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`. Forza ties its save
+  to the profile's XUID: to continue a save from Xenia, copy Xenia's
+  `content/<XUID>/4D5309C9` folder there and start with `--profile_xuid=<XUID>` (or put
+  `profile_xuid = "<XUID>"` in `forza.toml` next to the executable).
 
 ## Legal
 

@@ -59,5 +59,10 @@ Open questions, to fill in as the reverse engineering finds them:
 - The game polls `XamXStudioRequest(0x1003, &out)` every 30 ms from code around
   `0x82AD3810` (callers `0x82AD3830` ... `0x82AEDA3C`); with Kinect (NUI) imports
   around it, it looks Kinect-related rather than online.
+- Single-player festival races have an 8-car grid (a 4-lap circuit race: the player
+  and 7 named AI drivers). Event tickets carry the restrictions (e.g. "R2, made 2000
+  or later") and the rewards (points, credits). Before the start the pre-race menu
+  offers START RACE / DIFFICULTY / OPTIONS / QUIT RACE: the AI difficulty is chosen
+  per race there, a natural place to set it from the human share.
 - XAM app 0xFE message `0x2B003` is sent once when the single-player game starts
   (Xenia answers success, "Games used in: 4D5309C9").

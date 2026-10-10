@@ -142,6 +142,30 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     screen.
   - Online vision (design only, for later): `docs/online_vision.md`.
 
+- 2026-10-10 (afternoon, later): **free roam, events and races; DLC; Xenia saves.**
+  - DLC: `tools/install_dlc.py` extracts the 23 LIVE packages into the runtime's content
+    layout (`<user data>/0000000000000000/4D5309C9/00000002/<package>/` plus a
+    `Headers/00000002/<package>.header`), byte-identical to what the user's Xenia
+    installed. The game mounts them as `DLCRoot0:`..`DLCRoot22:` after START.
+  - Saves are tied to the profile: the user's Xenia save (profile `E030000004B490FA`)
+    copied under the runtime's profile folder froze the title screen after START. The
+    game checks its save with a keyed hash (`sub_82C66308`, key decoded from an
+    obfuscated table at `0x82518CF8`, failure callback `sub_824F31F8`), and the failure
+    path calls the fatal-error handler `sub_82C09F00` (records four values at
+    `0x83442EBC`, sets `0x83442ED1`, spins in `b .` at `0x82C09FA8`). With
+    `profile_xuid=E030000004B490FA` (`src/kernel/profile_identity.cpp`; also
+    `FORZA_XUID`, `profile_gamertag`/`FORZA_GAMERTAG`) the save loads: free roam in the
+    user's Aventador with traffic, a festival event ticket, car select, the pre-race
+    menu and a 4-lap circuit race against 7 AI drivers at 30 fps.
+  - `src/kernel/xekeys.cpp`: `XeKeysGetConsoleID`, `XeKeysConsolePrivateKeySign`,
+    `XeKeysConsoleSignatureVerification` and `XamUserGetIndexFromXUID` answer as in
+    Xenia (the SDK's stubs wrote nothing, or returned FALSE).
+  - `src/debug/fault_guard.cpp`: a fault nothing handles now logs a host stack
+    (module+offset) and aborts, instead of re-running the faulting instruction forever.
+    One run with the copied save hit a null read (`read of guest 0x00000000` on one
+    thread, logged 1.6 million times: 260 MB in a minute) 30 s after entering single
+    player; the next identical run did not. Not reproduced since.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.
@@ -151,6 +175,15 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
   out all zero (seen in Reach); check rendering with screenshots from a windowed run.
 - `FORZA_FPSLOG=1` logs the frame rate every 5 s; `FORZA_AUDIOLOG=1` the peak/RMS of the
   audio the game submits (non-zero means it makes sound).
+- A fault no handler takes aborts with a host stack in the log (`src/debug/fault_guard.cpp`):
+  `addr2line -f -e forza-recomp/out/build/linux/forza 0xOFFSET` names the `sub_XXXXXXXX`
+  frames. `FORZA_FAULT=wait` parks the thread instead, for `gdb -p`.
+- Never pass two files to `xxd` (`xxd a b` writes the dump into `b`): that clobbered a
+  save header once.
+- Testing with the user's Xenia save without touching it: copy
+  `~/xenia_canary_windows/content/E030000004B490FA/4D5309C9` into a scratch
+  `<dir>/B13EBABEBABEBABE/`, symlink `<dir>/0000000000000000` to the installed DLC, run with
+  `--user_data_root=<dir>` and `FORZA_XUID=E030000004B490FA`.
 - `tools/xrefs.py ADDR` lists branches, lis/addi pairs and data words pointing at an
   address (a quick stand-in for Ghidra's xrefs).
 - Kernel imports can be overridden from `src/` by defining `extern "C" REX_FUNC(__imp__Name)`;

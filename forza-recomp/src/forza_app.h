@@ -13,6 +13,10 @@
 #include <filesystem>
 #include <string>
 
+namespace forza {
+void InstallFaultGuard();  // src/debug/fault_guard.cpp
+}  // namespace forza
+
 class ForzaApp : public rex::ReXApp {
  public:
   using rex::ReXApp::ReXApp;
@@ -35,6 +39,9 @@ class ForzaApp : public rex::ReXApp {
   // raw Cache0/Cache1 partitions with a null device), so cache:\ fails with "device
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
+    // After the runtime's own handlers (MMIO, GPU watches), so it only sees faults
+    // nothing else takes.
+    forza::InstallFaultGuard();
     auto* vfs = runtime()->file_system();
     const std::filesystem::path host = cache_root() / "cache";
     std::error_code ec;
