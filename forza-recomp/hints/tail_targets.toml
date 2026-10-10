@@ -1,0 +1,19 @@
+[functions]
+# Functions reached only by tail calls (`b`) from other functions and placed right after
+# an unconditional branch, so the scanner never saw their start (codegen validation:
+# "target not in any function"). Mostly accessors, forwarders and this-adjusting thunks.
+0x82F76188 = { name = "sub_82F76188" }  # b from 0x82F76204 (into its body)
+0x82F762A0 = { name = "sub_82F762A0" }  # b from 0x82F7631C (into its body)
+0x82F5CC68 = { name = "sub_82F5CC68" }  # b from 0x82F5CCEC (into its body)
+0x82B1ABD0 = { name = "sub_82B1ABD0" }  # b from 0x82B13498
+0x82B1ABE8 = { name = "sub_82B1ABE8" }  # b from 0x82B1352C
+0x82B1ABF0 = { name = "sub_82B1ABF0" }  # b from 0x82B13540
+0x82B1ABF8 = { name = "sub_82B1ABF8" }  # b from 0x82B13550
+0x82B1AC00 = { name = "sub_82B1AC00" }  # b from 0x82B13588
+0x82B1AC08 = { name = "sub_82B1AC08" }  # b from 0x82B13560
+0x82F1ED30 = { name = "sub_82F1ED30" }  # b from 0x82F1EF58, 0x82F029F4
+0x82CF87F8 = { name = "sub_82CF87F8" }  # b from 0x82CED38C
+0x82B3B8B0 = { name = "sub_82B3B8B0" }  # b from 0x82B1ABEC
+0x82B3B8B8 = { name = "sub_82B3B8B8" }  # b from 0x82B1ABF4
+0x82B3B8C0 = { name = "sub_82B3B8C0" }  # b from 0x82B1ABFC
+0x82B3B8C8 = { name = "sub_82B3B8C8" }  # b from 0x82B1AC04

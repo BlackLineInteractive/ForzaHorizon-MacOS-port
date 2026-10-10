@@ -1,0 +1,21 @@
+# Game media and anything derived from it never goes in the repo.
+extracted/
+*.xex
+*.iso
+*.zip
+*.bik
+*.pck
+# Codegen output (translated game code) lives in the private -generated repo;
+# only the SDK's CMake glue is tracked.
+forza-recomp/generated/*
+!forza-recomp/generated/rexglue.cmake
+forza-recomp/out/
+forza-recomp/codegen-warnings.log
+# Ghidra projects (analysis of the game binary)
+ghidra_projects/
+# Build/editor noise
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+.claude/settings.local.json

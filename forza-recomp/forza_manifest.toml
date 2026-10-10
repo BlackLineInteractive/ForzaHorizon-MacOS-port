@@ -1,0 +1,26 @@
+# Codegen manifest for Forza Horizon (4D5309C9), base version (default.xex module hash
+# D48ABF1704CE5C4A). Started from `rexglue init` (ReXGlue v0.10.0.24-dev.gbd833a2).
+
+[project]
+name = "forza"
+sdk_version = "0.10.0"
+game_root = "../extracted/game"
+
+[entrypoint]
+file_path = "../extracted/game/default.xex"
+out_directory_path = "generated/default"
+includes = ["hints/tail_targets.toml", "hints/rexcrt.toml"]
+
+# Facade DLLs the game loads at run time with XexLoadImage (Xenia log: from
+# \Device\Cdrom0 at 0x88000000 and up): media playback and Kinect speech.
+[[modules]]
+guest_path = "XMediaFacade_default.xex"
+file_path = "../extracted/game/XMediaFacade_default.xex"
+out_directory_path = "generated/xmediafacade"
+includes = ["hints/xmediafacade.toml"]
+
+[[modules]]
+guest_path = "SpeechFacade_default.xex"
+file_path = "../extracted/game/SpeechFacade_default.xex"
+out_directory_path = "generated/speechfacade"
+includes = ["hints/speechfacade.toml"]
