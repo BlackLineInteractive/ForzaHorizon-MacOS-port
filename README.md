@@ -4,8 +4,9 @@ A native PC port of **Forza Horizon (Xbox 360)** built by statically recompiling
 original PowerPC executable to C++ with the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk),
 following the approach of [RecompiledHaloReach](https://github.com/Dyotson/RecompiledHaloReach).
 
-> **Status: early work in progress.** Codegen and the Linux build work; booting is being
-> brought up. Not playable yet.
+> **Status: early work in progress.** On Linux the game boots through the intro videos,
+> title screen and main menu into the opening drive (in-engine, with HUD, driveable).
+> Not tested beyond that yet.
 
 This repository contains **no game code and no game data**. You need your own copy of the
 game (the Games on Demand / SVOD package of the base version, Title ID `4D5309C9`). The
@@ -36,8 +37,10 @@ recompiled C++ is generated from your copy on your machine and never committed h
 | --- | --- |
 | Extraction (GOD/SVOD, STFS DLC) | Done (`tools/xcontent_extract.py`) |
 | Codegen of `default.xex` + 2 DLLs | Done (76,788 functions, 248 MB of C++) |
-| Linux build (Clang) | In progress |
-| Boot, intro, menus | Not yet |
+| Linux build (Clang) | Builds and links |
+| Boot, intro video, title screen, main menu | Work, render correctly with the patched GPU plugin |
+| Opening drive (in-engine) | Renders and drives with a pad (only tested briefly) |
+| Audio | Not verified |
 | DLC | Not yet |
 | Windows | Not yet |
 

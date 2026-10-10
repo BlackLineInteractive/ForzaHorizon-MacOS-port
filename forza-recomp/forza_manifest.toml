@@ -9,7 +9,7 @@ game_root = "../extracted/game"
 [entrypoint]
 file_path = "../extracted/game/default.xex"
 out_directory_path = "generated/default"
-includes = ["hints/tail_targets.toml", "hints/rexcrt.toml"]
+includes = ["hints/tail_targets.toml", "hints/rexcrt.toml", "hints/default_indirect_entries.toml", "hints/default_orphan_functions.toml"]
 
 # Facade DLLs the game loads at run time with XexLoadImage (Xenia log: from
 # \Device\Cdrom0 at 0x88000000 and up): media playback and Kinect speech.
@@ -17,10 +17,10 @@ includes = ["hints/tail_targets.toml", "hints/rexcrt.toml"]
 guest_path = "XMediaFacade_default.xex"
 file_path = "../extracted/game/XMediaFacade_default.xex"
 out_directory_path = "generated/xmediafacade"
-includes = ["hints/xmediafacade.toml"]
+includes = ["hints/xmediafacade.toml", "hints/xmediafacade_indirect_entries.toml", "hints/xmediafacade_orphan_functions.toml"]
 
 [[modules]]
 guest_path = "SpeechFacade_default.xex"
 file_path = "../extracted/game/SpeechFacade_default.xex"
 out_directory_path = "generated/speechfacade"
-includes = ["hints/speechfacade.toml"]
+includes = ["hints/speechfacade.toml", "hints/speechfacade_indirect_entries.toml", "hints/speechfacade_orphan_functions.toml"]

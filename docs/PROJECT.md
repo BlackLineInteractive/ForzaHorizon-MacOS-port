@@ -97,6 +97,34 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     word just past the function (MSVC's marker for unreachable switch cases); function
     `0x8241A370` is 2.5 MB (one huge initializer).
 
+- 2026-10-10 (later): **boots to gameplay.** The game plays the Microsoft Studios intro
+  video, shows the title screen ("PRESS START"), the first-run video calibration screen,
+  the main menu (Single Player / Multiplayer), the live-action festival intro video, and
+  then the in-engine prologue: the SRT Viper cinematic on the road and the drive to the
+  festival with HUD (minimap, speedometer), steerable with scripted pad input. Rendering
+  looks right with the patched GPU plugin (Reach's 19 patches). Screenshots in
+  `screenshots/` (gitignored). What it took:
+  - 220 indirectly referenced entry points (vtables, callback tables, CRT initializers)
+    and 357 orphan functions in `default.xex`, plus 37/22 and 89/19 in the two DLLs,
+    found with Reach's tools ported to read the XEX image instead of Ghidra
+    (`tools/find_missing_entries.py`, `tools/find_orphan_functions.py`). The first boot
+    died in `XMediaFacade`'s CRT initializers ("Call to invalid or unregistered function
+    at 0x882435D8", a `__xc_a` entry). Six hints that split functions were pruned
+    (`tools/prune_split_hints.py` plus two by hand: a jump-table case after a call at
+    `0x829CBE14`, an EH funclet at `0x82ABAF38`), and 20 that landed on import thunks
+    (codegen: "outranked by import") were dropped: they left undefined `sub_831EDxxx`
+    symbols, and in a DLL an undefined symbol only shows up when `dlopen` fails at run
+    time ("Failed to load shared library for module").
+  - `cache:` mounted on a host folder (`<cache_root>/cache`) in `ForzaApp::OnPreLaunchModule`,
+    as Xenia does with `mount_cache`: the game keeps ghost and replay streams there.
+  - Codegen rewrites the DLL sources during the build, but only `default.xex`'s sources
+    are declared codegen outputs, so ninja picks up DLL changes on its next run:
+    `tools/build.sh` runs ninja twice.
+  - Open: `Resolve region is empty` + `PM4_DRAW_INDX_2(3, 8, 2): Failed in backend`
+    logged ~180 times a second (Xenia later made empty resolves a silent no-op,
+    "log spam in Forza Horizon 1/2"); `XamXStudioRequest` stub logged 33 times a second
+    (Xenia also gets it, 314k calls in the user's log); audio not verified.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.

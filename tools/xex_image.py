@@ -67,6 +67,21 @@ def load_image(path):
     return load_address, image
 
 
+def sections(load_address, image):
+    """PE sections of a loaded image: [(name, start, end, executable)]."""
+    pe, = struct.unpack_from("<I", image, 0x3C)
+    count, = struct.unpack_from("<H", image, pe + 6)
+    opt_size, = struct.unpack_from("<H", image, pe + 20)
+    table = pe + 24 + opt_size
+    out = []
+    for i in range(count):
+        name, vsize, vaddr = struct.unpack_from("<8sII", image, table + i * 40)
+        flags, = struct.unpack_from("<I", image, table + i * 40 + 36)
+        start = load_address + vaddr
+        out.append((name.rstrip(b"\0").decode("latin-1"), start, start + vsize, bool(flags & 0x20000000)))
+    return out
+
+
 def write_elf(path, load_address, image):
     # ELF32 big-endian, EM_PPC, one PROGBITS section .text (AX) at load_address.
     shstr = b"\0.text\0.shstrtab\0"

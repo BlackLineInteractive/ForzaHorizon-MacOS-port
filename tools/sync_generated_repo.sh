@@ -19,6 +19,8 @@ sed -i -E "s/(From manifest\/hints at RecompiledForzaHorizon commit: ).*/\1$MAIN
 cd "$DEST"
 git add -A
 if git diff --cached --quiet; then echo "generated code unchanged"; exit 0; fi
-git -c user.name=agent -c user.email=agent@local commit -q -m "Codegen output for RecompiledForzaHorizon@$MAIN ($SDK)"
+# SYNC_TRAILER: extra lines for the commit message (e.g. co-author lines).
+git -c user.name=agent -c user.email=agent@local commit -q \
+    -m "Codegen output for RecompiledForzaHorizon@$MAIN ($SDK)" ${SYNC_TRAILER:+-m "$SYNC_TRAILER"}
 git push -q origin HEAD
 echo "pushed generated code for $MAIN"

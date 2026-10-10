@@ -19,3 +19,5 @@ __pycache__/
 .vscode/
 .idea/
 .claude/settings.local.json
+# Screenshots of the game (derived from game assets)
+screenshots/
