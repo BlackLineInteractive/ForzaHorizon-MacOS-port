@@ -5,17 +5,18 @@
 // X_TITLE_SERVER {inaServer, dwFlags, szServerInfo[200]}; Reach matches the description's
 // comma-separated tokens against its service names, then opens HTTP/1.0 connections.)
 //
-// Forza Horizon enumerates the title servers every 30 s and picks one whose description
-// matches the service it wants: the description holds wildcard patterns (`*`, `?`;
-// sub_83153D48, called from sub_83155238). It then talks Turn 10's "Xls Client"
-// protocol to it: HTTP/1.1 POST /Services/o.xtsw, Content-Type bin/xtsw, with
-// X-TitleId, X-ClassName, X-Method and X-UserId headers. With Live sign-in the
-// enumeration returns one title server, the Forza Live server, described as "*" (or
-// FORZA_LSP_SERVICES), so every service resolves to it; net.cpp sends TCP connections to
-// the server's HTTP port, where server/forza_live_lsp.py logs and answers. Without an
-// answer the party lobby says "The Horizon server is currently unavailable" (no XP for
-// online games) and play goes on. The marketplace asset enumeration (0x58042) is empty.
-// Every other enumerator goes to the SDK.
+// Forza Horizon enumerates the title servers every 30 s and picks the one whose
+// description matches its service mask: sub_83155238 calls Matches(mask, description)
+// (sub_83153D48: `*` and `?` wildcards, case-insensitive) with the LspProvider config's
+// defaultMask "Turn10.*" as the pattern. With Live sign-in the enumeration returns one
+// title server, the Forza Live server, described as "Turn10.Horizon" (FORZA_LSP_SERVICES
+// overrides it; a description the mask doesn't match, such as "*", leaves the game
+// without title services: "The Horizon server is currently unavailable"). The game then
+// calls Turn 10's services on it: HTTP/1.1 POST /Services.Horizon/o.xtsw to port 80,
+// Content-Type bin/xtsw, X-ClassName / X-Method / X-UserId headers (docs/title_services.md);
+// net.cpp sends the connection to the server's HTTP port, where server/forza_live_lsp.py
+// answers. The marketplace asset enumeration (0x58042) is empty. Every other enumerator
+// goes to the SDK.
 
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
@@ -53,10 +54,10 @@ void Store32(uint8_t* p, uint32_t v) {
   p[3] = uint8_t(v);
 }
 
-// The title server's description: patterns the game matches its service names against.
+// The title server's description, which the game's service mask must match.
 std::string Services() {
   const char* v = std::getenv("FORZA_LSP_SERVICES");
-  return v ? v : "*";
+  return v ? v : "Turn10.Horizon";
 }
 
 }  // namespace

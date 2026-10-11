@@ -45,7 +45,7 @@ recompiled C++ is generated from your copy on your machine and never committed h
 | Audio | The game produces sound (measured, not listened to yet) |
 | Saves | Saved and loaded; Xenia saves load with `profile_xuid` set to the Xenia profile's XUID |
 | DLC | All 23 packages install with `tools/install_dlc.py` and are mounted by the game |
-| Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold; two players in one party, online free roam and an online race (Invite Friends, then Create Custom Game); matchmaking (Find Game) and title services (XP) not yet |
+| Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold; Turn 10's title services for sign-in, playlists and online XP; two players find each other with Find Game and race, the race awards XP and credits; parties (Invite Friends), Create Custom Game, online free roam. Storefront, auctions, gifting and scoreboards answer empty |
 | Windows | Not yet |
 
 ## Requirements
@@ -107,8 +107,12 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   this invites everyone in the room) and the others join that party on their own
   (`live_accept_invites`). The party leader then picks Create Custom Game, sets the game
   type under Setup Game (Free Roam, races, ...), saves the setup (YES) and starts once
-  the others are ready. Turn 10's title services are not emulated yet, so the party
-  lobby says the Horizon server is unavailable (no XP for online games).
+  the others are ready. Or, without a party: Find Game, then the Races playlist; the
+  first player hosts the playlist's lobby and the next ones join it, and the race starts
+  after the intermission once two players are in. The server also stands in for Turn 10's
+  title services ("the Horizon server", `docs/title_services.md`): the playlists, the
+  rounds' tracks, and online XP, which it keeps per player (`players/` in its data
+  directory) and gives back at every sign-in; credits stay in your save.
 - **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
   once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`.
 - **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`.

@@ -84,6 +84,7 @@ set(FORZA_SOURCES
     src/kernel/live_lsp.cpp
     src/kernel/live_tcp.cpp
     src/kernel/live_xmsg.cpp
+    src/kernel/module_resident.cpp
     src/kernel/net.cpp
     src/kernel/xam_enumerate.cpp
     src/kernel/xam_nui.cpp

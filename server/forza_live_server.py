@@ -344,30 +344,39 @@ async def read_request(reader):
 
 def response(status, body, content_type="application/octet-stream", extra=()):
     reason = {200: "OK", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error"}
-    head = [f"HTTP/1.0 {status} {reason.get(status, 'OK')}", f"Content-Type: {content_type}",
+    head = [f"HTTP/1.1 {status} {reason.get(status, 'OK')}", f"Content-Type: {content_type}",
             f"Content-Length: {len(body)}", "Access-Control-Allow-Origin: *", *extra]
     return ("\r\n".join(head) + "\r\n\r\n").encode() + body
 
 
 async def http_handler(server, reader, writer):
     """The HTTP side of the server, on --http-port. The game reaches it as its title
-    servers ("LSP"; forza_live_lsp.py). GET / or /status
-    returns a JSON status page for people and web front ends."""
+    servers ("LSP"; forza_live_lsp.py) and keeps the connection open between calls
+    (Connection: Keep-Alive). GET / or /status returns a JSON status page for people and
+    web front ends."""
+    peer = writer.get_extra_info("peername")
     try:
-        method, path, headers, body = await read_request(reader)
-        peer = writer.get_extra_info("peername")
-        if path in ("/", "/status"):
-            reply = response(200, json.dumps(server.status(), indent=2).encode(), "application/json")
-        else:
-            try:
-                status, content_type, data = lsp.handle(server, method, path, headers, body, peer)
-            except Exception:  # a bad request must not take the server down
-                log.exception("LSP %s %s failed", method, path)
-                status, content_type, data = 500, "text/plain", b"error"
-            log.info("http  %s %s %s -> %d (%d bytes)", peer[0], method, path, status, len(data))
-            reply = response(status, data, content_type)
-        writer.write(reply)
-        await writer.drain()
+        while True:
+            method, path, headers, body = await read_request(reader)
+            keep = headers.get("connection", "").lower() == "keep-alive"
+            conn = ("Connection: Keep-Alive" if keep else "Connection: close",)
+            if path in ("/", "/status"):
+                reply = response(200, json.dumps(server.status(), indent=2).encode(),
+                                 "application/json", conn)
+            else:
+                try:
+                    status, content_type, data = lsp.handle(server, method, path, headers, body,
+                                                            peer)
+                except Exception:  # a bad request must not take the server down
+                    log.exception("LSP %s %s failed", method, path)
+                    status, content_type, data = 500, "text/plain", b"error"
+                log.info("http  %s %s %s -> %d (%d bytes)", peer[0], method, path, status,
+                         len(data))
+                reply = response(status, data, content_type, conn)
+            writer.write(reply)
+            await writer.drain()
+            if not keep:
+                break
     except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, ValueError):
         pass
     finally:

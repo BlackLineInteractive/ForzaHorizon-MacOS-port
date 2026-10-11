@@ -714,15 +714,23 @@ uint32_t XSessionSearchWeighted(uint8_t* base, uint32_t buffer) {
 }
 
 // XSessionSearch (0xFB/0xB0016) {procedure, user, max results, property count u16,
-// context count u16, properties, contexts, results size, results}: the SDK answers
+// context count u16, properties, contexts, results size, results} and XSessionSearchEx
+// (0xB001C, the same and a user count; Forza's hopper search): the SDK answers
 // success with no results. Forza's playlists do not set Reach's hopper property, so its
 // searches find every session the room's players host for matchmaking (playlist 0).
 uint32_t XSessionSearchPlain(uint8_t* base, uint32_t buffer) {
   const uint8_t* b = GuestPtr(base, buffer);
-  if (Trace()) {
-    REXLOG_INFO("FORZA_LIVE: XSessionSearch procedure {} max {} properties {} contexts {}",
-                Load32(b), Load32(b + 8), Load32(b + 12) >> 16, Load32(b + 12) & 0xFFFF);
+  std::string query;  // the searched properties (id=value) and contexts (id:value)
+  for (uint32_t i = 0, n = Load32(b + 12) >> 16; i < n && i < 16 && Load32(b + 16); ++i) {
+    const uint8_t* prop = GuestPtr(base, Load32(b + 16) + 0x18 * i);
+    query += fmt::format(" {:08X}={:X}", Load32(prop), Load32(prop + 0x10));
   }
+  for (uint32_t i = 0, n = Load32(b + 12) & 0xFFFF; i < n && i < 16 && Load32(b + 20); ++i) {
+    const uint8_t* ctx = GuestPtr(base, Load32(b + 20) + 8 * i);
+    query += fmt::format(" {:08X}:{:X}", Load32(ctx), Load32(ctx + 4));
+  }
+  REXLOG_INFO("FORZA_LIVE: XSessionSearch procedure {} max {}:{}", Load32(b), Load32(b + 8),
+              query);
   return SearchSessions(base, Load32(b + 8), Load32(b + 12) >> 16, Load32(b + 16),
                         Load32(b + 24), Load32(b + 28));
 }
@@ -883,7 +891,8 @@ uint32_t Handle(uint8_t* base, uint32_t app, uint32_t message, uint32_t arg1, ui
         return XSessionSearchWeighted(base, arg1);
       case 0x000B0021:
         return XUserReadStats(base, arg1);
-      case 0x000B0016:
+      case 0x000B0016:  // XSessionSearch
+      case 0x000B001C:  // XSessionSearchEx: the same, then a user count
         return XSessionSearchPlain(base, arg1);
     }
   }

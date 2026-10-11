@@ -369,6 +369,47 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     Game" searches and players can find each other without an invite; join in progress
     from the friends list (presence) is untested.
 
+- 2026-10-10 (late night): **Turn 10's title services: the Horizon sign-in, Find Game
+  matchmaking and online XP** (format and services in `docs/title_services.md`).
+  - The title server now describes itself as `Turn10.Horizon` (the game's mask is
+    `Turn10.*`), and the game calls Turn 10's "Xls" services on it: HTTP POST
+    `/Services.Horizon/o.xtsw`, `bin/xtsw` bodies. The format came from the game's type
+    descriptors (9 words per field; member lists filled at startup, read from a running
+    game's memory) and the reply parser (`sub_82AA96F0`: a 12-byte status header, then
+    the results, `sub_82A95910`). Packed big-endian, u32-length-prefixed strings, byte
+    arrays and arrays; the 111-byte `Logon2` request decodes exactly. No hashes or
+    signatures anywhere.
+  - `server/forza_xtsw.py` (codec, the message types used) and `forza_live_lsp.py`
+    answer `User.Logon2`, the profile uploads, the hopper calls (`GetList`,
+    `GetSearchSettings`, `GetGameOptions`, `UserRegister`, `GetRaceMultipliers`, ...);
+    any other method gets success and zero bytes, which reads as empty results. The HTTP
+    side keeps connections alive (the game sends `Connection: Keep-Alive`).
+  - Playlists: hoppers with `maxAllowedRaces` etc. at 0 were all filtered out (the
+    beginner-playlist check, `sub_828864D0`; -1 is no limit). A failed `GetGameOptions`
+    disconnects; an empty one gives a lobby with "content not installed" (track 0). The
+    round XML follows the game's `DefaultRacesHopperOptions.xml` (zip method 21 =
+    XMemCompress LZX, decompressed with libmspack); tracks from the game database's
+    `HopperRaces`.
+  - Matchmaking: Find Game searches with `XSessionSearchEx` (0xB001C, property
+    0x10000030 = hopper id), which went to the SDK (no results), so everyone hosted;
+    `live_xmsg.cpp` now answers it like `XSessionSearch`.
+  - Leaving an online race faulted both games: the game unloads and reloads
+    XMediaFacade, and the SDK's unload looks the recompiled library up by the module's
+    resolved path (no match), so the reload is refused ("already loaded; refusing
+    duplicate load") and the game reads through a null module. `module_resident.cpp`
+    keeps the facade DLLs loaded on their last `XexUnloadImage` (the SDK bug itself is
+    not patched).
+  - Test (two `tools/play.sh` instances, private server, `--dump-requests`): both Find
+    Game -> Races; B joins A's lobby ("Clear Springs Run", intermission), both race
+    (A driven along the minimap's route by a script, B stuck): A 1st, "XP REWARDS" 1,320
+    XP (level 2 -> 3), B 935 XP, credits 500 -> 4,250 and 1,125; then the next round's car
+    class vote. After a restart, credits came back from the save but online XP was 0:
+    the game takes online XP from `Logon2` (`userData.currentXPTotal`), so the server
+    keeps it (`players/<XUID>.json`, from `UpdateAll`); with that, both restarted at
+    level 3 / 2 with their XP.
+  - Next: the Playground playlist's game (preset 7) untested; Find Custom Game; the other
+    services (storefront, auctions, scoreboards) answer empty.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.
