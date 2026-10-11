@@ -171,8 +171,14 @@ def download_file(xuid, body):
 
 
 def user_data(entry):
-    return {"qwXuid": int(entry["xuid"], 16), "wzGamerTag": entry["gamertag"],
-            "currentCareerLevel": entry.get("level", 0)}
+    """The row's player, with their car club when they are in one (forza_clubs)."""
+    import forza_clubs
+    u = {"qwXuid": int(entry["xuid"], 16), "wzGamerTag": entry["gamertag"],
+         "currentCareerLevel": entry.get("level", 0)}
+    club, role = forza_clubs.membership(u["qwXuid"])
+    if club:
+        u.update(clanId=club["id"], clanTag=club["tag"], roleInClan=role)
+    return u
 
 
 def row(entry, position):
@@ -273,9 +279,34 @@ def rollup_entries(event_type, pivot):
     return out
 
 
+def online_xp_entries():
+    """Every player by online XP (their profile's onlineXP, kept from UpdateAll)."""
+    folder = os.path.join(DATA_DIR, "players")
+    out = []
+    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        try:
+            with open(os.path.join(folder, name)) as f:
+                record = json.load(f)
+        except (OSError, ValueError):
+            continue
+        xp = record.get("profile", {}).get("onlineXP", 0)
+        if xp > 0:
+            out.append({"xuid": name[:16], "gamertag": record.get("gamertag", name[:16]),
+                        "score": float(xp), "submitted": record.get("profileUpdated", 0),
+                        "carId": 0, "carClassId": 0, "carPerformanceIndex": 0.0,
+                        "usedSTM": 0, "usedTCS": 0, "usedABS": 0, "usedAutoBrake": 0,
+                        "usedAutoShifting": 0, "usedClutch": 0, "ghostFileId": -1,
+                        "level": record.get("careerLevel", 0)})
+    out.sort(key=lambda e: -e["score"])
+    return out
+
+
 def get_rollup_rows(xuid, body):
     p, _ = x.decode(x.ScoreboardGetRollupRows_Params, body)
-    entries = rollup_entries(p["eventTypeId"], p["pivotId"])
+    if p["eventTypeId"] in EVENT_TYPES and p["type"] == 0:
+        entries = rollup_entries(p["eventTypeId"], p["pivotId"])
+    else:  # not a race rollup: Race Central's ONLINE XP is the guess
+        entries = online_xp_entries()
     rows, user_row = rows_view(entries, xuid, p["view"], p["startAt"], p["maxResults"])
     log.info("title: GetRollupRows %016X type %d view %d pivot %d event type %d: %d rows", xuid,
              p["type"], p["view"], p["pivotId"], p["eventTypeId"], len(rows))
