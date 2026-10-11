@@ -215,26 +215,61 @@ def get_rows(xuid, body):
                                                  "totalRowCount": len(entries)})
 
 
-def rollup_entries(event_type, class_id):
-    """A rollup board: every player's results over all scoreboards, ranked by the number
-    of scoreboards they lead (then entered). Our boards don't know their event type, so
-    every rollup shows the same totals."""
+# Rollup boards (GetRollupRows: Race Central's LEADERBOARDS, "VIEW OVERALL"): eventTypeId 1
+# festival events, 2 street races, 3 showcases; pivotId -1 all, else a wristband level.
+# A scoreboard id is the event's Id in the game database (Events: HorizonEventID "FR61",
+# Level 6 for board 199, GoPro Millennia Masters).
+EVENT_TYPES = {1: "FR", 2: "ST", 3: "EX"}
+EVENTS = None  # Id -> (HorizonEventID prefix, wristband level)
+
+
+def events():
+    global EVENTS
+    if EVENTS is None:
+        EVENTS = {}
+        import forza_world
+        if forza_world.GAME_DB and os.path.isfile(forza_world.GAME_DB):
+            import sqlite3
+            try:
+                db = sqlite3.connect("file:%s?mode=ro" % forza_world.GAME_DB, uri=True)
+                EVENTS = {i: ((h or "")[:2], lvl) for i, h, lvl in
+                          db.execute("select Id, HorizonEventID, Level from Events")}
+                db.close()
+            except sqlite3.Error as e:
+                log.warning("scoreboards: game database: %s", e)
+    return EVENTS
+
+
+def in_rollup(board_key, event_type, pivot):
+    sbid, stt = (int(v) for v in board_key.split(":"))
+    if stt:
+        return False
+    info = events().get(sbid)
+    if info is None:
+        return not events()  # without the database every board counts
+    prefix, level = info
+    if event_type in EVENT_TYPES and prefix != EVENT_TYPES[event_type]:
+        return False
+    return pivot < 0 or level == pivot
+
+
+def rollup_entries(event_type, pivot):
+    """Every player's total over the boards of a rollup: ranked by the number of events
+    they have a time on, then by the total of their best times (the score shown)."""
     STORE.load()
     players = {}
-    for board in STORE.boards.values():
-        entries = sorted(board.values(), key=lambda e: e["score"])
-        for i, e in enumerate(entries):
-            p = players.setdefault(e["xuid"], dict(e, score=0.0, wins=0, boards=0))
+    for board_key, board in STORE.boards.items():
+        if not in_rollup(board_key, event_type, pivot):
+            continue
+        for e in board.values():
+            if e.get("type") in BIGGER_IS_BETTER:
+                continue
+            p = players.setdefault(e["xuid"], dict(e, score=0.0, boards=0))
             p["boards"] += 1
-            if i == 0:
-                p["wins"] += 1
-            if e["submitted"] > p["submitted"]:
-                p["submitted"] = e["submitted"]
-    out = []
-    for p in players.values():
-        p["score"] = float(p["wins"] * 1000 + p["boards"])
-        out.append(p)
-    out.sort(key=lambda e: -e["score"])
+            p["score"] += e["score"]
+            p["submitted"] = max(p["submitted"], e["submitted"])
+            p["ghostFileId"] = -1
+    out = sorted(players.values(), key=lambda e: (-e["boards"], e["score"]))
     return out
 
 

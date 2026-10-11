@@ -147,7 +147,8 @@ randomizedOrder, intermissionTimeMs}`. A category holds the hoppers from its
 `sub_82730500`) lists the first category's hoppers that every party member may join
 (`sub_82888988` -> `sub_828864D0`): with `-1` meaning no limit, races < `maxAllowedRaces`,
 wins < `maxAllowedWins` and races >= `minAllowedRaces` (beginner playlists). Our hoppers:
-3 "Horizon World" and 1 "Races" (category Online), 2 "Playground Games". Horizon World is
+3 "Horizon World", 1 "Races" and 2 "Playground Games", all in the one category Online
+(a second category's hoppers would not be listed). Horizon World is
 the shared free-roam world (`docs/online_vision.md`): preset 7 rounds from the festival
 (track 1101), `GameTypeFilterType="FreeRoam"`, endless (`EndConditionOptions Type="None"`;
 the client runs them as an online free roam that players JUMP IN to, which has no timed
@@ -163,13 +164,18 @@ own `media/gametunablesettings.zip` `DefaultRacesHopperOptions.xml` and
 is unavailable; they are compressed with zip method 21, XMemCompress LZX with a 128 KB
 window: a block is `FF, u16 uncompressed size, u16 compressed size, data`, which
 libmspack's `lzxd` with window bits 17 decodes). The root is `<GameOptions>` with
-`GameTypePreset` (1 circuit race, 2 point-to-point, 7 the playground game), `TrackId`
+`GameTypePreset` (`GameOptionPresets.xml`: 1 circuit race, 2 point-to-point, 4
+Infected, 5 Cat & Mouse, 6 King, 7 free roam, 198 street race), `TrackId`
 (the game database's `Tracks`), `MaxPlayers`, `MaxAIPlayers`, `UseTraffic`,
 `CollisionMode`, time of day and car class attributes, and children `Buckets/Bucket` (with
 `CarRestrictions`), `StartingGridOptions StartType="OpenWorld"`, `EndConditionOptions
 Type="NumLaps" NumLaps=".."` and `ScoringOptions`. The server's rounds for hopper 1 are the
 game database's `HopperRaces` table (preset, track, laps: (1, 322, 3), (2, 155, 1), (1, 107,
-3), (2, 145, 1)), picked by `roundNum`; `DATA_DIR/hoppers/<id>.xml` replaces them.
+3), (2, 145, 1)), picked by `roundNum`; `DATA_DIR/hoppers/<id>.xml` replaces them. The
+Playground Games playlist (2) serves the game's own Infected (4, arena track 215), Cat &
+Mouse (5, track 322, 2 laps) and King (6, track 215, 180 s) presets in turn
+(`server/playground_rounds.xml`, copied from `GameOptionPresets.xml` with their buckets,
+tag and scoring options; the game's own playground hopper default is a free roam).
 
 `GetSearchSettings` returns the session filter (`numStartingMatchmakingQueryResults`,
 QoS limits, ranking factors) and `maxConnectAttemptsBeforeCreating`,

@@ -54,9 +54,11 @@ WORLD_ROUND_MINUTES = 0.0
 # (Default{Races,Playground}HopperOptions.xml).
 # Find Game lists the first category's hoppers; "Horizon World" is its first row.
 WORLD_HOPPER = 3
+PLAYGROUND_HOPPER_ID = 2
+# Find Game lists the first category's hoppers only, so all three are in it.
 HOPPER_CATEGORIES = [
-    {"name": "Online", "description": "The shared world and races.", "hopperStartIndex": 0},
-    {"name": "Playground", "description": "Playground games.", "hopperStartIndex": 2},
+    {"name": "Online", "description": "The shared world, races and playground games.",
+     "hopperStartIndex": 0},
 ]
 HOPPERS = [
     # The shared world: online free roam (the game's own Quick Match playlist,
@@ -71,8 +73,8 @@ HOPPERS = [
     {"id": 1, "name": "Races", "description": "We pick the routes, you pick the game type, "
                                               "and everyone votes for the Car class.",
      "playerCount": 8},
-    {"id": 2, "name": "Playground Games", "description": "Infected, Cat & Mouse and King.",
-     "playerCount": 8},
+    {"id": PLAYGROUND_HOPPER_ID, "name": "Playground Games",
+     "description": "Infected, Cat & Mouse and King, in turn.", "playerCount": 8},
 ]
 HOPPER_DEFAULTS = {"allowVoteToSkip": True, "allowVoteToKick": True,
                    "allowVoteToRebalance": False, "payoutModifier": 1.0, "hideTrueSkill": True,
@@ -279,7 +281,7 @@ EMPTY_ANSWER = 4096  # zero bytes after the header for methods without a handler
 # 7 is the playground game of DefaultPlaygroundHopperOptions.xml.
 HOPPER_ROUNDS = {
     1: [(1, 322, 3), (2, 155, 1), (1, 107, 3), (2, 145, 1)],
-    2: [(7, 317, 0)],
+    2: [(7, 317, 0)],  # unused: PLAYGROUND_ROUNDS
     # Free roam (GameOptionPresets.xml's IDS_PresetFreeRoam) from the festival (track 1101,
     # the custom game's default starting location), no end condition.
     WORLD_HOPPER: [(7, 1101, 0)],
@@ -301,6 +303,25 @@ GAME_OPTIONS_XML = """<GameOptions GameTypePreset="{preset}"{filter} TrackId="{t
 """
 
 
+# The Playground Games playlist (hopper 2): the game's own Infected, Cat & Mouse and King
+# presets (server/playground_rounds.xml, from GameOptionPresets.xml), one per round.
+PLAYGROUND_HOPPER = 2
+
+
+def load_playground_rounds():
+    import xml.etree.ElementTree as ET
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "playground_rounds.xml")
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError) as e:
+        log.warning("playground rounds: %s", e)
+        return []
+    return [ET.tostring(g, encoding="unicode").strip().encode() for g in root]
+
+
+PLAYGROUND_ROUNDS = load_playground_rounds()
+
+
 def hopper_get_game_options(server, xuid, body):
     """A round's options as GameOptions XML (the format of the game's
     media/gametunablesettings Default*HopperOptions.xml). DATA_DIR/hoppers/<hopperId>.xml
@@ -319,6 +340,10 @@ def hopper_get_game_options(server, xuid, body):
     elif os.path.isfile(path):
         with open(path, "rb") as f:
             xml = f.read()
+    elif hopper == PLAYGROUND_HOPPER and PLAYGROUND_ROUNDS:
+        xml = PLAYGROUND_ROUNDS[round_num % len(PLAYGROUND_ROUNDS)]
+        log.info("title: hopper %d round %d for %016X: playground preset %s", hopper, round_num,
+                 xuid, xml.split(b'GameTypePreset="')[1].split(b'"')[0].decode())
     else:
         rounds = HOPPER_ROUNDS.get(hopper, HOPPER_ROUNDS[1])
         preset, track, laps = rounds[round_num % len(rounds)]
