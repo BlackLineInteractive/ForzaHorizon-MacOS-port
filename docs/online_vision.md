@@ -437,8 +437,23 @@ world's host, and the world still advertised by the server under its name (statu
 - After each, the one who quit started the game again, picked Horizon World, was placed
   into the remaining player's world and jumped in (`rejoin`).
 
-Counts (clean / runs): see the table in "Tests" of phase 3's section below... (filled in
-as the runs come in).
+Clean / runs (nine sessions; no crash or hang in any; all but the first two steps with
+the SDK overlay's patches 0028-0032):
+
+| case | clean |
+| --- | --- |
+| the peer quits mid-race (it runs 3 CPU drivers) | 3 / 3 |
+| the host quits mid-race | 3 / 3 |
+| the host quits in the wait lobby | 3 / 3 |
+| the peer quits in the wait lobby | 2 / 2 |
+| the peer quits in the free roam 5 s after an event | 2 / 2 |
+| the host quits in the free roam 5 s after an event | 2 / 2 |
+| the one who quit comes back into the same world | 13 / 13 |
+
+Not counted: two steps that the session's own time limit cut short (both games were
+stopped by `run.sh`'s deadline during a rejoin; `t10.sh` now skips a step that can't end
+in time) and one where the script quit the wrong console (a variable clobbered by a
+loop).
 
 Test scripts (copy and adapt; paths are the last agent's scratchpad): `t7.sh` two
 players, B jumps into A's world, then N events in a row, each checked on both consoles
@@ -599,6 +614,10 @@ Server with `--challenge-range 3000 --challenge-any-direction` (the two cars sta
    screen showed LEADERBOARDS.
 6. The pause menu (MAP, CO-OP CHALLENGES, ..., END FREE ROAM, QUIT) open for 6 s: the
    free roam's frame kept running (no LEFT), so pausing during a race doesn't forfeit.
+7. A world event during a race (`t13.sh`): B challenged, A accepted (race to the Wind
+   Farm), then the server started an event in the world: both clients left the free
+   roam (LEFT), the server "both left the free roam: called off", both "Race called off",
+   and both went to the event's lobby.
 
 Seen on the way: in free roam X opens the LEADERBOARDS screen (B's screen during test 3
 of the first run), hence X is taken from the game only with a car ahead.
@@ -614,7 +633,6 @@ of the first run), hence X is taken from the game only with a car ahead.
   festival); test 5 used 150 m with the same rule.
 - The text box is ImGui, not the game's HUD; the game has a challenge alert of its own
   (`IDS_RivalsAlerts_Challenge_MsgTitle/MsgBody/HudPopup`) that could carry it.
-- A world event starting during a race calls it off (both send LEFT); untested.
 
 ## Likely building blocks
 
