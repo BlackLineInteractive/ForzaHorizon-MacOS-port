@@ -31,6 +31,7 @@ import os
 import time
 import uuid
 
+import forza_notifications as notifications
 import forza_xtsw as x
 import forza_xtsw_all as A
 
@@ -163,8 +164,20 @@ def close_if_due(a, now=None):
         log.info("title: auction %d ended: %s", a["id"],
                  "sold to %s for %d" % (a["topBidderTag"], a["topBid"]) if a["topBidder"]
                  else "no bids")
+        notify_end(a)
         return True
     return False
+
+
+def notify_end(a):
+    """Message Center: SOLD to the seller and WON to the winner, or FAILED to the seller."""
+    car = {"AuctionId": a["id"], "CarId": a["car"].get("carId", 0)}
+    if a["topBidder"]:
+        notifications.send(int(a["seller"], 16), notifications.AUCTION_SOLD,
+                           dict(car, SalePrice=a["topBid"]))
+        notifications.send(int(a["topBidder"], 16), notifications.AUCTION_WON, car)
+    else:
+        notifications.send(int(a["seller"], 16), notifications.AUCTION_FAILED, car)
 
 
 def next_bid(a):
@@ -403,6 +416,9 @@ def place_bid(gamertag_of):
         # one in full); the previous top bidder's is owed until they collect it.
         refunded = a["held"].pop(me, 0)
         a["held"][me] = amount
+        if a["topBidder"] and a["topBidder"] != me:
+            notifications.send(int(a["topBidder"], 16), notifications.AUCTION_OUTBID,
+                               {"AuctionId": a["id"], "CarId": a["car"].get("carId", 0)})
         a["bids"].append({"xuid": me, "amount": amount, "time": time.time()})
         if me not in a["bidders"]:
             a["bidders"].append(me)
@@ -410,6 +426,7 @@ def place_bid(gamertag_of):
         if a["buyout"] and amount >= a["buyout"]:
             a["closedAt"] = time.time()
             log.info("title: auction %d bought out by %016X for %d", a["id"], xuid, amount)
+            notify_end(a)
         else:
             log.info("title: bid %d on auction %d by %016X (refunded %d)", amount, a["id"], xuid,
                      refunded)
@@ -532,6 +549,10 @@ def send_car_gift(gamertag_of):
         MARKET.save()
         log.info("title: gift %d: car %d from %016X to %016X", gid, p["car"]["carId"], xuid,
                  p["recipientXuid"])
+        # The recipient collects it from the Message Center (RetrieveCarGift).
+        notifications.send(p["recipientXuid"], notifications.GIFT_CAR, {
+            "GiftId": gid, "MakeId": p["car"]["make"], "ModelId": p["car"]["carId"],
+            "SenderXuid": xuid, "SenderGamerTag": g["senderTag"], "Reason": 0})
         return x.reply(A.ForzaGiftingSendCarGift_Results, {"giftId": gid})
     return handler
 
@@ -568,6 +589,47 @@ def retrieve_credits_gift(xuid, body):
     g["retrieved"] = True
     MARKET.save()
     return x.reply(A.ForzaGiftingRetrieveCreditsGift_Results, {"creditAmount": g["credits"]})
+
+
+# ---- Gifts from the server's operator (GET /gift on the status port, from this machine) ----
+
+def gift_credits(recipient, amount, message="", sender=0, sender_tag="Forza Live"):
+    """Credits for a player, collected from the Message Center (RetrieveCreditsGift)."""
+    gid = MARKET.new_id()
+    MARKET.gifts[gid] = {"id": gid, "type": "credits", "sender": key(sender),
+                         "senderTag": sender_tag, "recipient": key(recipient),
+                         "sent": time.time(), "credits": int(amount), "retrieved": False}
+    MARKET.save()
+    log.info("title: gift %d: %d credits to %016X", gid, amount, recipient)
+    notifications.send(recipient, notifications.GIFT_CREDITS, {
+        "GiftId": gid, "Amount": int(amount), "UserSuppliedReason": message,
+        "SenderXuid": sender, "SenderGamerTag": sender_tag})
+    return gid
+
+
+def gift_stock_car(recipient, model, sender=0, sender_tag="Forza Live"):
+    """A stock car (the game database's Data_Car id), collected from the Message Center
+    (RetrieveCarGift): no parts, tuning or livery, a new car's history."""
+    import forza_clubs
+    info = forza_clubs.game_car(model)
+    if not info:
+        raise ValueError("no car %d in the game database" % model)
+    year, make = info[0], info[1]
+    gid = MARKET.new_id()
+    MARKET.gifts[gid] = {
+        "id": gid, "type": "car", "sender": key(sender), "senderTag": sender_tag,
+        "recipient": key(recipient), "sent": time.time(),
+        "car": {"make": make, "carId": model, "year": year},
+        "carHistory": {"base": {"numOwners": 1, "originalOwner": sender_tag[:15],
+                                "curOwnerPurchaseDate": int(time.time())}},
+        "wzItemGuid": "", "unencryptedSize": 0, "retrieved": False,
+        **{name: "" for name in BLOBS}}
+    MARKET.save()
+    log.info("title: gift %d: car %d (make %d) to %016X", gid, model, make, recipient)
+    notifications.send(recipient, notifications.GIFT_CAR, {
+        "GiftId": gid, "MakeId": make, "ModelId": model, "SenderXuid": sender,
+        "SenderGamerTag": sender_tag, "Reason": 0})
+    return gid
 
 
 def pending_gifts(xuid):

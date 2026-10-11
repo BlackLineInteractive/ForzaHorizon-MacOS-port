@@ -116,7 +116,7 @@ Notifications, Transaction}`. What the game calls, in order:
 | Race start | `GameplayLog.Write`, `Hopper.GetRaceMultipliers` | empty, multiplier 1.0 |
 | Race end | `Scoreboard.SubmitScoreEx` / `SubmitScore`, `User.SetPlayercardInfo`, `OnlineProfile.UpdateAllTables` / `UpdateAll` | the score kept (scoreboards below) / success (profile kept) |
 | End of a Rivals race (also retiring) | `User.WriteRaceStatsEx(id, raceStats, scoreData)` | kept per player (`userXP`, credits, the race) |
-| Message Center (online free roam, after races) | `Xls Notifications.StartNewSession`, then `RetrieveForUser` every `nextRetrieveSeconds` | nonce 1, 60 s (with 0 the game polled 7 times a second) |
+| After the sign-in (single player too) | `Xls Notifications.RetrieveForUser` `notificationPollIntervalSeconds` after `Logon2`, then every `nextRetrieveSeconds` (`StartNewSession` on some paths) | the player's notifications (Message Center, below), 15 s then 60 s (with 0 the game polled 7 times a second) |
 | Sometimes | `Xls User.SetFriends` | empty |
 
 The game keeps one HTTP connection to the title server for all its calls. The server must
@@ -343,9 +343,23 @@ its thumbnail): "2012 Lamborghini R3 797, OWNER DriverA, SHARED DATE, LAST USED 
 NUMBER OF RACES 0" (`screenshots/2026-10-11_club_0*.jpg`). Roles as the game labels
 them (`sub_8282A260`): 1 leader, 2 co-leader, 3 member. CREATE asks for the tag and name
 with the on-screen keyboard (not driven in these tests; the club used here was created on
-the server). Invitations and accepted requests reach the other player through the
-Message Center, which does not work yet; they see the club when they next enter the
-sign.
+the server). Requests, invitations and the other club news go through the Message Center
+(below). The game's own text (`Clan.str`) settles what "open" means: a club either
+RECEIVES REQUESTS, which a leader or co-leader accepts ("The membership request ... may
+have been accepted/rejected by another Leader or Co-Leader"), or is INVITE ONLY (the
+game then hides REQUEST TO JOIN CLUB). The server used to let a player into an open club
+at once; now it keeps the request and sends CLUB REQUEST to the leaders and co-leaders.
+
+Tested with two consoles (DriverA co-leader of HZN, DriverB in no club): A's CAR CLUB sign
+(X at the festival) showed INVITE MEMBER (co-leaders and leaders), which lists the
+players the server knows outside a club (`GetUsersToInvite`: DriverB); INVITE TO CLUB
+sent `InviteToClan(B)`, "The invite was sent successfully". B's next poll brought CLUB
+INVITE ("[HZN] DriverA sent you an invite to join the Horizon Kings club"); after the
+Message Center's first-visit popup, A JOIN, "You are about to join the Horizon Kings
+club. Are you sure?", A: `AcceptClanInvite(1, id)`, the message cleared, "Would you like
+to set a waypoint to the Car Club now?", and the club had 3 members (A saw DriverB in the
+member list); the leader and A got NEW CLUB MEMBER. A's QUIT CLUB (two confirmations,
+`LeaveClan`) sent MEMBER QUIT to the leader and B (co-leader by then).
 
 ### The Auction House and car gifts (`server/forza_market.py`)
 
@@ -387,35 +401,80 @@ to the Auction service was seen. Gifting has stubs only for `SendCarGift`,
 Center notification (`FileDepot_GiftCar` and others, below), whose parameter format is
 not known yet.
 
-### Notifications (Message Center)
+### Notifications (Message Center) (`server/forza_notifications.py`)
 
-`Xls Notifications.StartNewSession` and `RetrieveForUser(nonce, maxResults 512,
-cbParameterBlockSize 0xC800)` (`sub_82AB3CF0`) fill the Message Center; each result is
-`{id, xuidRecipient, notificationType, hasThumbnail, isRead, deleteAction,
-expirationDate, cbParameters}` and their parameters follow in `parameterBlock`. Each type
-has a handler class (title string, created through a visitor whose vtables are at
-`0x82071A20`, `0x82071AE8` and `0x82071BB8`): TopFeatures_NewDlc `sub_82834668`,
-GeneralNews_SimpleMessage `sub_82834998`, GeneralNews_Banned `sub_82834B68`,
-FileDepot_AuctionOutbid/Won/Sold/Failed `sub_82834DF8`/`82835048`/`82835298`/`82835520`,
-OutOfStock `sub_82835768`, MoneyReceived `sub_82835940`, GiftMoney `sub_82835B70`,
-GiftItem `sub_82835DA8`, GiftCar and DeliveryFailed `sub_828362D8`, the Car Club ones
-(`sub_82836760`-`sub_82838138`), RivalsAlerts_Challenge and SpeedCamera_Challenge
-`sub_828386A0`, RivalsAlerts_Recommendation `sub_82838F48`. The visitor (vtable
-`0x82071A24`) has one creator per kind; by slot (offset/4): 5, 7, 8, 11, 22 a generic
-message, 6 NewDlc, 9 Banned, 12 AuctionOutbid, 13 AuctionSold, 14 AuctionWon, 15
-AuctionFailed, 16 GiftMoney, 17 GiftItem, 18 GiftCar, 19 OutOfStock, 20 MoneyReceived, 23
-RivalsRecommendation, 24 RivalsChallenge/SpeedCamera, 25 ClubRequest, 26 ClubInvite, 27
-KickRecommendation, 28 KickNotification, 29 ClubDemotion, 30 MembershipAccepted, 31
-QuitNotification, 32 NewMember, 33 ClubPromotion, 34 shared car. How a
-`notificationType` picks the slot is not found yet.
+The Message Center is in the pause menu (START, MESSAGE CENTER; not in multiplayer). It
+lists what `Xls Notifications.RetrieveForUser(nonce, maxResults 512, cbParameterBlockSize
+0xC800)` (`sub_82AB3CF0`) returned: records `{id, xuidRecipient, notificationType,
+hasThumbnail, isRead, deleteAction, expirationDate, cbParameters}` (0x22 bytes each in the
+game) and, in `parameterBlock`, each one's parameters one after the other (cbParameters
+bytes each), in the xtsw encoding of service records.
 
-In single player the game starts a session (`StartNewSession`) when a race loads and then
-polls every `nextRetrieveSeconds`. A test (`--test-notifications 1,...,36`: one
-notification of each type 1-36, no parameters, expiring in 2100) reached the game (the
-reply's records were in its memory) but the Message Center still said NO MESSAGES:
-probably they need parameters, or categories in Logon2's `notificationCategories`
-(`{type, name, description, backgroundImageFileId}`, up to 5), which the server leaves
-empty. The server sends no notifications by default.
+**When the game polls.** The notification manager (`sub_82AB7168`, ticked on a network
+thread; state at +0x78) starts once the Message Center model (`sub_8283C328`, created by
+`sub_82618A10` after the sign-in) registers with it. It takes the nonce, the poll interval
+and up to 5 categories from `Logon2`'s `notificationNonce`, `notificationPollIntervalSeconds`
+and `notificationCategories` (it does not call `StartNewSession` on this path), and polls
+that many seconds later; after that every `nextRetrieveSeconds` of the last answer. With
+the old interval of 600 s the first poll came 10 minutes after the sign-in. The server now
+sends 15 s in `Logon2` and 60 s in the answers.
+
+**Categories.** A notification's category is the high byte of its type without bit 15.
+The Message Center keeps a tab per `Logon2` category (`type`, `name`, `description`) and
+crashed (a null read in `sub_82706320`) when it opened with a notification whose category
+had no tab. The server sends 1 News, 2 Account, 3 Gifts & Auctions, 4 Rivals, 5 Car Club;
+the screen shows ALL MESSAGES and the tabs that have messages (LB/RB).
+
+**Types.** The type picks the parameter record and the Message Center entry
+(`sub_82ABD248`, which decodes the parameters with the record's member list and calls the
+visitor at `0x82071A24`; the member lists are filled by the static initializers that branch
+to `0x82A93090`, so their layouts can be read from the image without a running game):
+
+| Type | Entry | Parameters |
+| --- | --- | --- |
+| 0x0100, 0x0102, 0x0200, 0x0300, 0x8401 | GENERAL MESSAGE | `Message` |
+| 0x0101 | NEW DLC AVAILABLE | `Message, OfferId` |
+| 0x0201 / 0x0202 | banned / unbanned | `BanExpireTime, BannedFromFeatureAreas` |
+| 0x8300 - 0x8303 | auction outbid, sold, won, failed | `AuctionId, CarId` (+ `SalePrice` for sold); listed without title or text |
+| 0x8304 | NEW GIFT (credits): A DOWNLOAD = `Gifting.RetrieveCreditsGift(GiftId)` | `GiftId, Amount, UserSuppliedReason, SenderXuid, SenderGamerTag` |
+| 0x8305 | gift of a file (tuning, livery, photo...) | `GiftId, ItemId, GiftFileType, SenderXuid, SenderGamerTag, Reason` |
+| 0x8306 | NEW GIFT (car): A DOWNLOAD = `RetrieveCarGift(GiftId)` | `GiftId, MakeId, ModelId, SenderXuid, SenderGamerTag, Reason` |
+| 0x8307, 0x8308 | storefront out of stock, MONEY RECEIVED (A RECEIVE CREDITS) | file id/type/title; `Amount` |
+| 0x8309 | profile import award | `awardAmount` |
+| 0x8402 | RIVAL RECOMMENDATION (A SET WAYPOINT) | `TimeTrialId, localizedTimeTrialName, trackName, description, category` |
+| 0x8403 | RIVAL CHALLENGE: "X beat you in the ... Horizon Rival Challenge on <date>! Their time, Their car, Track" (A SET WAYPOINT) | `senderXuid, senderGamertag, senderClanTag, senderClanRole, senderFlags, sentTime, timeTrialId, carId, localizedTimeTrialName, trackName, trackId, score, scoreType, category` |
+| 0x0500 | CLUB REQUEST (A ACCEPT, Y CLUB HISTORY) | `requestorXuid, requestorGamertag, clanId` |
+| 0x0501 | CLUB INVITE (A JOIN, Y CLUB INFO) | `sponsorXuid, clanId, clanName, clanTag, sponsorGamertag` |
+| 0x0502 - 0x0508 | kick recommendation, kicked, demotion, MEMBERSHIP ACCEPTED, member quit, NEW CLUB MEMBER, CLUB MEMBER PROMOTED | gamertags, XUIDs, `clanName, clanTag` (promotion: `newRole`) |
+| 0x8501 | shared car added/removed | `sharedCarAction, playerXuid, playerGamertag, MakeName, ModelName, perfIndex, Year` |
+| 0x0000, 0x8000, 0x8001 | permissions changed, badge granted, set credits (no entry) | `Flags`; `BadgeId`; `creditAmount, action` |
+
+Reading a message calls `Notifications.MarkRead(id)`, X DELETE and a collected gift
+`Clear(id)`; the server keeps the read flag and drops cleared ones
+(`DATA_DIR/notifications.json`, per recipient, 30 days).
+
+**What sends them.** `Scoreboard.NotifyRival` (a player beat their rival's time): RIVAL
+CHALLENGE to the rival, from the player's best on that board. `Gifting.SendCarGift`: NEW
+GIFT to the recipient. Car clubs: a request to join a closed club goes to its leaders and
+co-leaders, an approval to the player (MEMBERSHIP ACCEPTED), an invitation to the invitee
+(its id is also accepted as `AcceptClanInvite`'s `invitationId`), a new member, a member
+who quit, a removal, a promotion or demotion, a kick recommendation to the members it
+concerns. Auctions: outbid, sold, won, failed (the Auction House is not reachable, below).
+The server's operator can send messages and gifts from the server's machine:
+`GET /notify?to=<gamertag>&type=0x100&Message=...` (any type and its fields) and
+`GET /gift?to=<gamertag>&credits=25000&message=...` or `&car=<Data_Car id>` (a stock car).
+`--test-notifications` queues a sample of each kind, 10,000 credits and a 370Z for every
+player at their first sign-in.
+
+Tested (one console, DriverA, a copy of the career save): all samples listed in the
+Message Center (ALL MESSAGES (16), NEWS (2)) with their text, e.g. "[HZN] Turn 10 has
+been promoted to the rank of CO-LEADER in the Horizon Kings club", "Turn 10 sent you an
+invite to join the Horizon Kings club. Would you like to join?", "Turn 10 beat you in the
+GoPro Millennia Masters Horizon Rival Challenge on 10/11/2026 09:21:48 PM! Their time:
+01:33.294, Their car: LP700-4"; "Forza Live has gifted you a 370Z": DOWNLOAD called
+`RetrieveCarGift`, the game saved ("Saving content") and cleared the message; the credits
+gift's DOWNLOAD called `RetrieveCreditsGift` and the save's credits went from 642,996 to
+652,996.
 
 ## Testing these services
 

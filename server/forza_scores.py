@@ -365,12 +365,27 @@ def get_best_scores(xuid, body):
     return x.reply(x.ScoreboardGetBestScores_Results, {"bestScore": {"score": best}})
 
 
-def notify_rival(xuid, body, notify=None):
+def notify_rival(xuid, body):
+    """The game says it beat the rival's score: the rival gets a Message Center message
+    (Rivals: "<player> beat your time")."""
+    import forza_notifications as notifications
     p, _ = x.decode(x.ScoreboardNotifyRival_Params, body)
     log.info("title: %016X beat rival %016X on board %d (type %d)", xuid, p["rivalXuid"],
              p["gameScoreboardId"], p["type"])
-    if notify:
-        notify(p)
+    board = STORE.board(p["gameScoreboardId"], p["isServerTimeTrial"])
+    mine = board.get("%016X" % xuid)
+    if not mine or not p["rivalXuid"] or p["rivalXuid"] == xuid:
+        return x.reply()
+    me = user_data(mine)
+    trial = next((t for t in TIME_TRIALS if t[0] == p["gameScoreboardId"]), None) \
+        if p["isServerTimeTrial"] else None
+    notifications.send(p["rivalXuid"], notifications.RIVALS_BEATEN, {
+        "senderXuid": xuid, "senderGamertag": mine["gamertag"],
+        "senderClanTag": me.get("clanTag", ""), "senderClanRole": me.get("roleInClan", 0),
+        "sentTime": time.time(), "timeTrialId": p["gameScoreboardId"],
+        "carId": mine["carId"], "localizedTimeTrialName": trial[2] if trial else "",
+        "trackName": trial[5] if trial else "", "trackId": trial[4] if trial else 0,
+        "score": mine["score"], "scoreType": p["type"], "category": trial[1] if trial else 0})
     return x.reply()
 
 

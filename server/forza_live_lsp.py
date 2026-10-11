@@ -18,7 +18,8 @@ services). This answers the ones online play needs:
     Forza.WebServices.Auction, Gifting  the Auction House and car gifts (forza_market.py)
     Xls.WebServices.Clan, User; Forza.WebServices.CarClub, SharedCar  car clubs and the
                                club garage (forza_clubs.py)
-    Xls.WebServices.Notifications StartNewSession, RetrieveForUser (the poll interval)
+    Xls.WebServices.Notifications  the Message Center (forza_notifications.py): Rivals,
+                               gifts, auctions and car club messages
 
 Other methods get an empty answer: success and zero bytes, which read as zero, false,
 empty strings and empty lists whatever the method's results are (the game ignores bytes
@@ -36,6 +37,7 @@ import urllib.parse
 
 import forza_clubs as clubs
 import forza_market as market
+import forza_notifications as notifications
 import forza_scores as scores
 import forza_world as world
 import forza_xtsw as x
@@ -122,9 +124,10 @@ def add_arguments(parser):
                         help="the Playground Games playlist's rounds in turn, as game type "
                              "presets: 4 Infected, 5 Cat & Mouse, 6 King (default: all three, "
                              "4,5,6)")
-    parser.add_argument("--test-notifications", default="",
-                        help="answer RetrieveForUser with one empty notification of each of "
-                             "these types (comma separated), to map them in the Message Center")
+    parser.add_argument("--test-notifications", action="store_true",
+                        help="queue a sample Message Center notification of each kind, a "
+                             "credits gift and a car gift for every player who signs in (once "
+                             "per server run)")
     parser.add_argument("--time-trials", action="store_true",
                         help="offer the server's Monthly Rivals time trials (forza_scores.py; "
                              "the game's screen for them does not load yet)")
@@ -141,7 +144,7 @@ def configure(args):
     DUMP = args.dump_requests
     WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
     scores.TIME_TRIALS_ENABLED = args.time_trials
-    TEST_NOTIFICATION_TYPES[:] = [int(t) for t in args.test_notifications.split(",") if t]
+    TEST_NOTIFICATIONS["on"] = args.test_notifications
     if args.playground_games:
         wanted = [p.strip() for p in args.playground_games.split(",") if p.strip()]
         by_preset = {xml.split(b'GameTypePreset="')[1].split(b'"')[0].decode(): xml
@@ -151,6 +154,7 @@ def configure(args):
     scores.configure(DATA_DIR)
     market.configure(DATA_DIR)
     clubs.configure(DATA_DIR, load_player)
+    notifications.configure(DATA_DIR)
 
 
 def dump(method, path, headers, body):
@@ -199,6 +203,11 @@ def save_player(xuid, record):
 
 # ---- Services ----
 
+# --test-notifications: samples of every kind for each player at their first sign-in.
+TEST_NOTIFICATIONS = {"on": False, "sent": set()}
+TEST_SENDER = 0x0009000000C0FFEE
+TEST_GIFT_CAR = 1103  # Data_Car: 2010 Nissan 370Z
+
 # The game asks the permission table before opening an online feature (Rivals is feature
 # 61, others 20, 21, 22, 28, 45, 66, 84, 123...: sub_8264D570 -> sub_82CE97B8 looks the
 # feature up by MethodId in the table Logon2 / GetPermissionsTable gave and returns its
@@ -217,6 +226,12 @@ def user_logon2(xuid, body):
     save_player(xuid, record)
     log.info("title: Logon2 %016X '%s' level %d", xuid, login["wzGamerTag"],
              login["currentCareerLevel"])
+    if TEST_NOTIFICATIONS["on"] and xuid not in TEST_NOTIFICATIONS["sent"]:
+        TEST_NOTIFICATIONS["sent"].add(xuid)
+        for ntype, params in notifications.samples(TEST_SENDER, "Turn 10").items():
+            notifications.send(xuid, ntype, params)
+        market.gift_credits(xuid, 10000, "Have fun!")
+        market.gift_stock_car(xuid, TEST_GIFT_CAR)
     return x.reply(x.UserLogon2_Results, {"responseData": {
         "isProfileValid": True, "permissions": PERMISSIONS,
         "userData": {"qwXuid": xuid, "wzGamerTag": login["wzGamerTag"],
@@ -224,7 +239,11 @@ def user_logon2(xuid, body):
                      "currentBadgeId": login["currentBadgeId"],
                      "currentPlayerTitleId": login["currentPlayerTitleId"],
                      "currentXPTotal": record.get("profile", {}).get("onlineXP", 0)},
-        "notificationPollIntervalSeconds": 600,
+        # The Message Center's first poll (RetrieveForUser) comes this long after the
+        # sign-in; later ones after each answer's nextRetrieveSeconds.
+        "notificationNonce": 1,
+        "notificationPollIntervalSeconds": notifications.FIRST_POLL_SECONDS,
+        "notificationCategories": notifications.CATEGORIES,
         "gameplayLogConfig": {"Enabled": False, "Throttle": bytes(26)},
         "defaultTimeoutMs": 30000, "defaultContentTimeoutMs": 60000}})
 
@@ -411,34 +430,7 @@ def gamertag_of(xuid):
     return load_player(xuid).get("gamertag") or "%016X" % xuid
 
 
-# The Message Center polls for notifications (Xls Notifications.RetrieveForUser) after
-# StartNewSession, every nextRetrieveSeconds (0 made it poll 7 times a second).
-NOTIFICATION_POLL_SECONDS = 60
-
-
-TEST_NOTIFICATION_TYPES = []  # --test-notifications: one empty notification of each
-# An expiration date far ahead whether the game reads it as a FILETIME or Unix time: 2100
-# as a FILETIME (100 ns since 1601).
-FAR_FUTURE = (2100 - 1601) * 31556952 * 10 ** 7
-
-
-def notifications_retrieve(xuid, body):
-    p, _ = x.decode(x.NotificationsRetrieveForUser_Params, body)
-    results = [{"id": 1000 + t, "xuidRecipient": xuid, "notificationType": t,
-                "expirationDate": FAR_FUTURE, "cbParameters": 0}
-               for t in TEST_NOTIFICATION_TYPES]
-    if results:
-        log.info("title: notifications for %016X: test types %s", xuid, TEST_NOTIFICATION_TYPES)
-    return x.reply(x.NotificationsRetrieveForUser_Results,
-                   {"results": results[:p["maxResults"]],
-                    "nextRetrieveSeconds": NOTIFICATION_POLL_SECONDS})
-
-
 SERVICES = {
-    ("Xls.Notifications", "StartNewSession"):
-        lambda xuid, body: x.reply(x.NotificationsStartNewSession_Results,
-                                   {"nonce": 1, "nextRetrieveSeconds": NOTIFICATION_POLL_SECONDS}),
-    ("Xls.Notifications", "RetrieveForUser"): notifications_retrieve,
     ("User", "Logon2"): user_logon2,
     ("User", "GetPermissionsTable"):
         lambda xuid, body: x.reply(x.UserGetPermissionsTable_Results, {"permissions": PERMISSIONS[
@@ -463,6 +455,7 @@ SERVICES = {
     **scores.services(gamertag_of),
     **market.services(gamertag_of),
     **clubs.services(),
+    **notifications.services(),
 }
 
 
@@ -493,6 +486,63 @@ def service_call(headers, body, server=None):
         return x.failure(2, "bad parameters")
 
 
+def find_player(who):
+    """A player's XUID from a gamertag or a hex XUID (players who signed in here)."""
+    folder = os.path.join(DATA_DIR, "players")
+    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        if name.endswith(".json"):
+            xuid = int(name[:-5], 16)
+            if who.lower() in (name[:-5].lower(), load_player(xuid).get("gamertag", "").lower()):
+                return xuid
+    return None
+
+
+def notify_request(query):
+    """GET /notify?to=<gamertag|XUID>&type=<n>[&field=value...] (from this machine only):
+    queue a Message Center notification, its parameters from the query (missing ones
+    zero); type "sample" queues one of each kind."""
+    arg = {k: v[0] for k, v in query.items()}
+    to = find_player(arg.pop("to", ""))
+    if to is None:
+        return 404, "text/plain", b"no such player"
+    kind = arg.pop("type", "sample")
+    if kind == "sample":
+        ids = [notifications.send(to, t, p)
+               for t, p in notifications.samples(TEST_SENDER, "Turn 10").items()]
+    else:
+        ntype = int(kind, 0)
+        if ntype not in notifications.TYPES:
+            return 400, "text/plain", b"unknown type"
+        fields = dict(notifications.TYPES[ntype][1].sub)
+        params = {}
+        for name, value in arg.items():
+            if name in fields:
+                kind = fields[name].kind
+                params[name] = (float(value) if kind == "F32" else value if kind in (
+                    "WSTR", "SYSTIME") else int(value, 0))
+        ids = [notifications.send(to, ntype, params)]
+    return 200, "application/json", json.dumps({"to": "%016X" % to, "ids": ids}).encode()
+
+
+def gift_request(query):
+    """GET /gift?to=<gamertag|XUID>&credits=<n>[&message=...] or &car=<Data_Car id> (from
+    this machine only): a gift the player collects from the Message Center."""
+    arg = {k: v[0] for k, v in query.items()}
+    to = find_player(arg.get("to", ""))
+    if to is None:
+        return 404, "text/plain", b"no such player"
+    try:
+        if "credits" in arg:
+            gid = market.gift_credits(to, int(arg["credits"]), arg.get("message", ""))
+        elif "car" in arg:
+            gid = market.gift_stock_car(to, int(arg["car"]))
+        else:
+            return 400, "text/plain", b"credits=<n> or car=<id>"
+    except ValueError as e:
+        return 400, "text/plain", str(e).encode()
+    return 200, "application/json", json.dumps({"to": "%016X" % to, "giftId": gid}).encode()
+
+
 def handle(server, method, path, headers, body, peer):
     """Returns (HTTP status, content type, body bytes)."""
     if DUMP:
@@ -503,6 +553,9 @@ def handle(server, method, path, headers, body, peer):
                  headers.get("x-method", "?"), len(body))
         return 200, "bin/xtsw", service_call(headers, body, server)
     log.info("LSP request %s %s (%d bytes)", method, path, len(body))
+    if url.path in ("/notify", "/gift") and peer and peer[0] in ("127.0.0.1", "::1"):
+        query = urllib.parse.parse_qs(url.query)
+        return (notify_request if url.path == "/notify" else gift_request)(query)
     if url.path.startswith("/storage/") and method == "GET":
         data = stored_file(url.path)
         if data is not None:

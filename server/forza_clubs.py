@@ -2,9 +2,11 @@
 garage's shared cars (Forza.WebServices.SharedCar).
 
 A player creates a club (CreateClan: a tag of up to 4 characters and a name) and leads it;
-others find it (GetUsersToJoin lists the clubs by their leader) and join (RequestJoiningClan
-joins an open club at once; a closed club keeps the request for a leader's
-ApproveRequestToJoin) or are invited (InviteToClan; AcceptClanInvite). Roles, as the game
+others find it (GetUsersToJoin lists the clubs by their leader) and ask to join
+(RequestJoiningClan: a club that receives requests keeps it until a leader or co-leader
+accepts it, ApproveRequestToJoin; an "invite only" club takes none) or are invited
+(InviteToClan; AcceptClanInvite). Requests, invitations and the other club news reach the
+players as Message Center notifications (forza_notifications.py). Roles, as the game
 labels them (sub_8282A260): 1 leader, 2 co-leader (at most 3), 3 member. The player's
 club is part of their UserData (clanId, clanTag, roleInClan: GetUserData, the
 leaderboards' rows). Members share cars to the club garage (SharedCar.Create: the car's
@@ -20,6 +22,7 @@ import logging
 import os
 import time
 
+import forza_notifications as notifications
 import forza_xtsw as x
 import forza_xtsw_all as A
 
@@ -115,9 +118,27 @@ def history(xuid, club, action, role=0):
     d["history"] = d["history"][-500:]
 
 
+def gamertag(xuid):
+    return (PLAYER(xuid) if PLAYER else {}).get("gamertag", "") or "%016X" % xuid
+
+
+def names(club):
+    return {"clanName": club["name"], "clanTag": club["tag"]}
+
+
+def tell(club, ntype, params, roles=(LEADER, CO_LEADER, MEMBER), skip=()):
+    """A Message Center notification to the club's members with these roles."""
+    for m, r in members_of(club["id"]):
+        if r["role"] in roles and m not in skip:
+            notifications.send(m, ntype, params)
+
+
 def join(xuid, club, role=MEMBER):
     CLUBS.load()["members"][key(xuid)] = {"club": club["id"], "role": role, "since": time.time()}
     history(xuid, club, JOINED, role)
+    if role != LEADER:
+        tell(club, notifications.CLUB_NEW_MEMBER, dict(
+            names(club), newMemberXuid=xuid, newMemberGamertag=gamertag(xuid)), skip=(xuid,))
 
 
 def leave(xuid, removed=False):
@@ -130,6 +151,13 @@ def leave(xuid, removed=False):
         if car["owner"] == key(xuid) and car["club"] == club["id"]:
             del d["cars"][car_id]
     history(xuid, club, REMOVED if removed else QUIT)
+    if removed:
+        notifications.send(xuid, notifications.CLUB_KICKED, dict(
+            names(club), kickedXuid=xuid, kickedGamertag=gamertag(xuid)))
+    else:
+        tell(club, notifications.CLUB_MEMBER_QUIT, dict(
+            names(club), exMemberXuid=xuid, exMemberGamertag=gamertag(xuid)),
+            roles=(LEADER, CO_LEADER))
     rest = members_of(club["id"])
     if not rest:
         log.info("title: club %d '%s' closed (no members)", club["id"], club["tag"])
@@ -230,14 +258,19 @@ def get_users_to_invite(xuid, body):
 
 
 def request_join(xuid, club):
+    """A request to join: a club that receives requests (open) keeps it for its leaders and
+    co-leaders, who get a CLUB REQUEST in the Message Center (A ACCEPT: ApproveRequestToJoin);
+    an invite-only club takes none (the game then hides REQUEST TO JOIN CLUB)."""
     if membership(xuid)[0]:
         return x.failure(1, "already in a club")
-    if club["open"]:
-        join(xuid, club)
-        log.info("title: %016X joined club %d [%s]", xuid, club["id"], club["tag"])
-    elif key(xuid) not in club["requests"]:
+    if not club["open"]:
+        return x.failure(2, "invite only")
+    if key(xuid) not in club["requests"]:
         club["requests"].append(key(xuid))
         log.info("title: %016X asks to join club %d [%s]", xuid, club["id"], club["tag"])
+        tell(club, notifications.CLUB_REQUEST, {
+            "requestorXuid": xuid, "requestorGamertag": gamertag(xuid), "clanId": club["id"]},
+            roles=(LEADER, CO_LEADER))
     CLUBS.save()
     return x.reply()
 
@@ -264,6 +297,7 @@ def approve_request(xuid, body):
     club["requests"].remove(who)
     if not membership(p["approvedUser"])[0]:
         join(p["approvedUser"], club)
+        notifications.send(p["approvedUser"], notifications.CLUB_ACCEPTED, names(club))
     CLUBS.save()
     return x.reply()
 
@@ -275,8 +309,12 @@ def invite(xuid, invitee):
     if membership(invitee)[0]:
         return x.failure(2, "already in a club")
     d = CLUBS.load()
-    d["invites"].append({"id": CLUBS.new_id(), "club": club["id"], "from": key(xuid),
-                         "to": key(invitee), "time": time.time()})
+    # The invitee accepts it from the Message Center (AcceptClanInvite with the club and,
+    # as the invitation, the notification's id).
+    nid = notifications.send(invitee, notifications.CLUB_INVITE, dict(
+        names(club), sponsorXuid=xuid, sponsorGamertag=gamertag(xuid), clanId=club["id"]))
+    d["invites"].append({"id": CLUBS.new_id(), "notification": nid, "club": club["id"],
+                         "from": key(xuid), "to": key(invitee), "time": time.time()})
     CLUBS.save()
     log.info("title: %016X invites %016X to club %d", xuid, invitee, club["id"])
     return x.reply()
@@ -302,7 +340,8 @@ def accept_clan_invite(xuid, body):
     p, _ = x.decode(A.ClanAcceptClanInvite_Params, body)
     d = CLUBS.load()
     inv = next((i for i in d["invites"] if i["to"] == key(xuid) and i["club"] == p["clanId"]
-                and (not p["invitationId"] or i["id"] == p["invitationId"])), None)
+                and (not p["invitationId"]
+                     or p["invitationId"] in (i["id"], i.get("notification")))), None)
     club = d["clubs"].get(str(p["clanId"]))
     if not inv or not club or membership(xuid)[0]:
         return x.failure(1, "no invitation")
@@ -343,8 +382,15 @@ def change_member_role(xuid, body):
         return x.failure(2, "too many co-leaders")
     if p["newRole"] == LEADER:  # make leader: the old leader steps down to co-leader
         members[key(xuid)]["role"] = CO_LEADER
+    old_role = members[key(p["userToChange"])]["role"]
     members[key(p["userToChange"])]["role"] = p["newRole"]
     history(p["userToChange"], club, CHANGED_ROLE, p["newRole"])
+    if p["newRole"] > old_role:  # 1 leader, 2 co-leader, 3 member: a bigger number is lower
+        notifications.send(p["userToChange"], notifications.CLUB_DEMOTION, names(club))
+    elif p["newRole"] < old_role:
+        tell(club, notifications.CLUB_PROMOTION, dict(
+            names(club), newRole=p["newRole"], newPromotedXuid=p["userToChange"],
+            newPromotedGamertag=gamertag(p["userToChange"])))
     CLUBS.save()
     return x.reply()
 
@@ -374,6 +420,13 @@ def get_clan_history(xuid, body):
 def recommend_removal(xuid, body):
     p, _ = x.decode(A.ClanRecommendMemberForRemoval_Params, body)
     log.info("title: %016X recommends removing %016X from their club", xuid, p["userToRemove"])
+    club, _ = membership(xuid)
+    if club and membership(p["userToRemove"])[0] is club:
+        tell(club, notifications.CLUB_KICK_RECOMMENDATION, {
+            "recommendingRemovalXuid": xuid, "recommendingRemovalGamertag": gamertag(xuid),
+            "recommendedForRemovalXuid": p["userToRemove"],
+            "recommendedForRemovalGamertag": gamertag(p["userToRemove"]),
+            "clanId": club["id"]}, roles=(LEADER,))
     return x.reply()
 
 
