@@ -16,6 +16,8 @@ services). This answers the ones online play needs:
                                ReportVoting, GetRaceMultipliers
     Forza.WebServices.Scoreboard  scores, leaderboards, Rivals and ghosts (forza_scores.py)
     Forza.WebServices.Auction, Gifting  the Auction House and car gifts (forza_market.py)
+    Xls.WebServices.Clan, User; Forza.WebServices.CarClub, SharedCar  car clubs and the
+                               club garage (forza_clubs.py)
     Xls.WebServices.Notifications StartNewSession, RetrieveForUser (the poll interval)
 
 Other methods get an empty answer: success and zero bytes, which read as zero, false,
@@ -32,6 +34,7 @@ import os
 import time
 import urllib.parse
 
+import forza_clubs as clubs
 import forza_market as market
 import forza_scores as scores
 import forza_world as world
@@ -147,6 +150,7 @@ def configure(args):
     os.makedirs(DATA_DIR, exist_ok=True)
     scores.configure(DATA_DIR)
     market.configure(DATA_DIR)
+    clubs.configure(DATA_DIR, load_player)
 
 
 def dump(method, path, headers, body):
@@ -458,6 +462,7 @@ SERVICES = {
                                    {"specialMultiplier": 1.0}),
     **scores.services(gamertag_of),
     **market.services(gamertag_of),
+    **clubs.services(),
 }
 
 
