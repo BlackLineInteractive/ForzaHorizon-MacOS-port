@@ -428,6 +428,22 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     is a 1 kHz guest vblank, so the game runs uncapped and its frame time becomes 0-3 whole
     milliseconds; not reproduced here (the port does not run that fast).
 
+- 2026-10-11: **a shared world: the Horizon World playlist** (phase 1 of
+  `docs/online_vision.md`, which has the details, the tests and the next phases).
+  - Find Game's first playlist (hopper 3) is online free roam (preset 7, festival). The
+    server answers its searches with the open worlds, fullest first, so players gather in
+    one world of up to 8; nobody open: the player hosts one. Searches now key on Forza's
+    hopper property `0x10000030` (the client knew only Reach's `0x10000015`).
+  - Find Game's lobby has no join in progress for free roam (the joiner waits for the round
+    to end; Find Game's free roam runs as mode 7, a custom game's as mode 9, which offers
+    JUMP IN): the world's rounds end every 10 minutes (`--world-round-minutes`).
+  - Host leaving: the game migrates on its own (no `XSessionMigrateHost`, no XSession call
+    at all), so guests publish a standby record of their world and the server advertises
+    it once its host is gone; a returning player was placed into the remaining player's
+    world. `XSessionMigrateHost` is answered anyway.
+  - Cap: the round's `MaxPlayers` sizes the session (16 served -> 16 slots); the game's own
+    UI and data stop at 8.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.

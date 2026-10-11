@@ -270,21 +270,82 @@ class ForzaLive(asyncio.DatagramProtocol):
     # --- Matchmaking sessions (RecompiledHaloReach's docs/online_plan.md section 5.4) ---
     # A player hosting a matchmaking session publishes it with a search key (the
     # playlist); players searching with that key get the room's matching sessions. The
-    # session record is the client's (XSESSION_INFO, slots, properties, QoS data) and
-    # opaque here. Every searching group also hosts a session, and two groups that find
-    # each other both join the other and wait for it forever, so a searcher with a
-    # session of its own only sees older sessions: newer groups join older ones.
+    # session record is the client's (XSESSION_INFO, slots, properties, QoS data); the
+    # server reads only the slots. Every searching group also hosts a session (Reach), and
+    # two groups that find each other both join the other and wait for it forever, so a
+    # searcher with a session of its own only sees older sessions: newer groups join
+    # older ones.
+    #
+    # Placement: a search gets only sessions with a free public slot, the fullest first
+    # (then the oldest), so players gather in as few sessions as possible. Forza's game
+    # searches before it hosts and joins the first session it can reach, which makes the
+    # Horizon World playlist one shared world per 8 players (docs/online_vision.md).
+
+    @staticmethod
+    def match_slots(record):
+        """(filled public slots, free public slots) of a session record."""
+        if len(record) < SESSION_INFO_SIZE + 4:
+            return 0, 1
+        max_public, _, filled_public, _ = record[SESSION_INFO_SIZE:SESSION_INFO_SIZE + 4]
+        return filled_public, max_public - filled_public
+
+    # Standby records: a player in a session someone else hosts publishes it with its own
+    # address as the host (op 2). Forza's game picks a new host among the remaining
+    # players when its host leaves, without telling Xbox LIVE, so once nobody hosts a
+    # session id any more, its standby records stand in for it: searchers get the oldest
+    # remaining member's record, with the number of members as the filled slots.
+
+    def standby_sessions(self, src, key):
+        """Advertisable standby sessions for playlist key: [(peer, record, since)]."""
+        hosted = {p.match[1][:8] for p in self.peers.values()
+                  if p.room == src.room and getattr(p, "match", None)}
+        groups = {}
+        for p in self.room_peers(src):
+            standby = getattr(p, "standby", None)
+            if standby and standby[0] == key and standby[1][:8] not in hosted:
+                groups.setdefault(standby[1][:8], []).append(p)
+        own = getattr(src, "standby", None)
+        found = []
+        for sid, members in groups.items():
+            if own and own[1][:8] == sid:
+                continue  # the searcher is in it already
+            members.sort(key=lambda p: p.standby[2])
+            record = bytearray(members[0].standby[1])
+            if len(record) >= SESSION_INFO_SIZE + 4:
+                record[SESSION_INFO_SIZE + 2] = min(len(members), 255)
+            found.append((members[0], bytes(record), members[0].standby[2]))
+        return found
 
     def on_match(self, peer, kind, body):
+        if kind == MATCH_PUBLISH and body[0] in (2, 3):
+            # op 2: standby (search key u32 + the record), op 3: withdraw it
+            if body[0] == 3:
+                peer.standby = None
+            else:
+                (key,) = struct.unpack_from(">I", body, 1)
+                record = body[5:5 + MAX_MATCH_RECORD]
+                old = getattr(peer, "standby", None)
+                if not old or old[1][:8] != record[:8]:
+                    log.info("match #%d %r is in %s (playlist %d)", peer.id, peer.name,
+                             record[:8].hex(), key)
+                peer.standby = (key, record, old[2] if old and old[1][:8] == record[:8]
+                                else time.monotonic())
+            return
         if kind == MATCH_PUBLISH:
             # op u8: 0 withdraw, 1 publish (then search key u32 + the record)
             if body[0] == 0:
+                if getattr(peer, "match", None):
+                    log.info("match #%d %r withdrew its session", peer.id, peer.name)
                 peer.match = None
             else:
                 (key,) = struct.unpack_from(">I", body, 1)
                 record = body[5:5 + MAX_MATCH_RECORD]
                 old = getattr(peer, "match", None)
                 since = old[2] if old and old[1][:8] == record[:8] else time.monotonic()
+                if not old or old[1][:SESSION_INFO_SIZE + 4] != record[:SESSION_INFO_SIZE + 4]:
+                    filled, free = self.match_slots(record)
+                    log.info("match #%d %r hosts %s for playlist %d (%d/%d)", peer.id, peer.name,
+                             record[:8].hex(), key, filled, filled + free)
                 peer.match = (key, record, since)  # since: when this session first appeared
             return
         # search key u32, request number u32. Reply: request number u32, count u16, then
@@ -292,12 +353,22 @@ class ForzaLive(asyncio.DatagramProtocol):
         # first, as many as fit a datagram.
         key, request = struct.unpack_from(">II", body, 0)
         own = getattr(peer, "match", None)
-        found = [p for p in self.room_peers(peer) if getattr(p, "match", None) and p.match[0] == key
+        found = [(p, p.match[1], p.match[2]) for p in self.room_peers(peer)
+                 if getattr(p, "match", None) and p.match[0] == key
                  and not (own and own[0] == key and p.match[2] >= own[2])]
-        found.sort(key=lambda p: p.match[2])
+        found += self.standby_sessions(peer, key)
+        found = [f for f in found if self.match_slots(f[1])[1] > 0]
+        found.sort(key=lambda f: (-self.match_slots(f[1])[0], f[2]))
+        if found:
+            filled, free = self.match_slots(found[0][1])
+            log.info("match #%d %r playlist %d: %d open session(s), first %s from #%d %r (%d/%d)",
+                     peer.id, peer.name, key, len(found), found[0][1][:8].hex(), found[0][0].id,
+                     found[0][0].name, filled, filled + free)
+        else:
+            log.info("match #%d %r playlist %d: no open session, it hosts", peer.id, peer.name, key)
         entries, size = [], 6
-        for p in found:
-            entry = struct.pack(">IQH", p.id, p.xuid, len(p.match[1])) + p.match[1]
+        for p, record, _ in found:
+            entry = struct.pack(">IQH", p.id, p.xuid, len(record)) + record
             if size + len(entry) > 1400:
                 break
             entries.append(entry)
@@ -321,7 +392,11 @@ class ForzaLive(asyncio.DatagramProtocol):
             rooms.setdefault(p.room, []).append(
                 {"id": p.id, "gamertag": p.name, "xuid": f"{p.xuid:016X}",
                  "online_for": int(time.time() - p.since), "relayed_bytes": p.relayed_bytes,
-                 "state": f"{p.state:08X}", "session": p.session[:8].hex(), "status": p.status})
+                 "state": f"{p.state:08X}", "session": p.session[:8].hex(), "status": p.status,
+                 "match": None if not getattr(p, "match", None) else
+                 {"playlist": p.match[0], "session": p.match[1][:8].hex(),
+                  "players": self.match_slots(p.match[1])[0],
+                  "slots": sum(self.match_slots(p.match[1]))}})
         return {"server": "forza-live", "protocol": VERSION, "uptime": int(time.time() - self.started),
                 "players": len(self.peers), "relayed_packets": self.relayed_packets,
                 "dropped_packets": self.dropped_packets, "rooms": rooms}

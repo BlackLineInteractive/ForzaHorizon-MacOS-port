@@ -45,7 +45,7 @@ recompiled C++ is generated from your copy on your machine and never committed h
 | Audio | The game produces sound (measured, not listened to yet) |
 | Saves | Saved and loaded; Xenia saves load with `profile_xuid` set to the Xenia profile's XUID |
 | DLC | All 23 packages install with `tools/install_dlc.py` and are mounted by the game |
-| Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold; Turn 10's title services for sign-in, playlists and online XP; two players find each other with Find Game and race, the race awards XP and credits; parties (Invite Friends), Create Custom Game, online free roam. Storefront, auctions, gifting and scoreboards answer empty |
+| Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold; Turn 10's title services for sign-in, playlists and online XP; two players find each other with Find Game and race, the race awards XP and credits; parties (Invite Friends), Create Custom Game, online free roam; a shared world: the Horizon World playlist places everyone into the same free roam automatically. Storefront, auctions, gifting and scoreboards answer empty |
 | Windows | Cross-compiled from Linux (`tools/build_windows.sh`), tested under Proton; not yet on Windows itself |
 
 ## Requirements
@@ -124,7 +124,17 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   `FORZA_SERVER=host[:port]` (or `live_server = "host:port"` in `forza.toml` next to the
   binary). Your online identity (XUID, gamertag: your login name unless
   `FORZA_GAMERTAG` is set) is kept in `~/.local/share/forza/4D5309C9/live_identity.txt`.
-  Everyone in the server's room is your friend. To play together: everyone opens
+  Everyone in the server's room is your friend.
+  **The shared world:** Multiplayer, Find Game, **Horizon World** (the first playlist).
+  The server puts you into the fullest open world (8 players each) or you open a new one,
+  and everyone who picks it after you is placed with you. A player who arrives while the
+  world's free roam is running waits in its lobby until the round ends (rounds last 10
+  minutes; `--world-round-minutes` on the server, 0 for endless) and then drives with
+  everyone. When the world's host leaves, the others keep driving and the next players are
+  placed with them. To drop into a running free roam at once: Find Custom Game, the FREE
+  ROAM tab, a world, JUMP IN (someone has to have started a public custom Free Roam).
+  Details: [`docs/online_vision.md`](docs/online_vision.md).
+  To play together in a party: everyone opens
   Multiplayer; one player picks Invite Friends in the party lobby (there is no Guide, so
   this invites everyone in the room) and the others join that party on their own
   (`live_accept_invites`). The party leader then picks Create Custom Game, sets the game

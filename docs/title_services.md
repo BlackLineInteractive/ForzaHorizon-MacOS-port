@@ -131,7 +131,11 @@ randomizedOrder, intermissionTimeMs}`. A category holds the hoppers from its
 `sub_82730500`) lists the first category's hoppers that every party member may join
 (`sub_82888988` -> `sub_828864D0`): with `-1` meaning no limit, races < `maxAllowedRaces`,
 wins < `maxAllowedWins` and races >= `minAllowedRaces` (beginner playlists). Our hoppers:
-1 "Races" (category Races) and 2 "Playground Games".
+3 "Horizon World" and 1 "Races" (category Online), 2 "Playground Games". Horizon World is
+the shared free-roam world (`docs/online_vision.md`): preset 7 rounds from the festival
+(track 1101), `GameTypeFilterType="FreeRoam"`, timed (`EndConditionOptions Type="Time"
+Time=` seconds, `--world-round-minutes`), its own search settings (intermission 5 s, 2
+connect attempts); `GetSearchSettings` is answered per hopper.
 
 `GetGameOptions` returns `gameOptionsXml`: the round's options in the format of the game's
 own `media/gametunablesettings.zip` `DefaultRacesHopperOptions.xml` and
@@ -155,12 +159,15 @@ QoS limits, ranking factors) and `maxConnectAttemptsBeforeCreating`,
 ### Matchmaking
 
 Find Game searches with `XSessionSearchEx` (XGI message 0xB001C, procedure 4, up to 25
-results) for property `0x10000030` = the hopper id, properties `0x30008105` and
+results) for property `0x10000030` = the hopper id (Find Custom Game: procedure 5, the game
+type tab's value, free roam 8, which public custom games set on their host), properties `0x30008105` and
 `0x30008106` (doubles, 3.0 and 1.0) and contexts `X_CONTEXT_GAME_TYPE` (0x800A) = 1 and
 `X_CONTEXT_GAME_MODE` (0x800B) = 0. With no result it hosts a matchmaking session itself
 (`XSessionCreate`, flags 0x2D) and registers it with `Hopper.UserRegister`; a later searcher
 finds it and joins. `live_xmsg.cpp` answers `XSessionSearchEx` like `XSessionSearch` from
-the sessions the room's players host (published on the Forza Live server).
+the sessions the room's players host for that property's value (published on the Forza
+Live server), those with a free slot only, the fullest first. The **session host** calls
+`GetGameOptions` when a round launches.
 
 ### XP and credits
 

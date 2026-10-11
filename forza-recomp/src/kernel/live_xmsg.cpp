@@ -13,6 +13,11 @@
 //   empty. We fill it (an online peer session id, our XNADDR, a random key) and, for a
 //   presence session, publish it, so friends see it as joinable. Delete and modify
 //   update that.
+// - XSessionMigrateHost (0xFB/0xB001E): when the host leaves, the new host's info gets our
+//   address and its session is published as ours. Forza's game does not call it (its
+//   free-roam host migration stays inside the game), so a guest also publishes a standby
+//   record of the matchmaking session it joined, for the server to advertise once the host
+//   is gone (PublishStandbyLocked).
 // - XPresenceSubscribe / Unsubscribe / CreateEnumerator (0xFC/0x5801E, 0x58044,
 //   0x58019): the lobby's active roster asks for the presence (state, session id) of
 //   the friends it lists; answered from the room's roster.
@@ -261,18 +266,27 @@ struct HostedSession {
   uint32_t max_public, max_private;     // slots
   uint32_t filled_public, filled_private;
   uint64_t order;                       // creation order: the newest presence session wins
+  uint32_t playlist = 0;                // a joined matchmaking session's (what we searched)
+  std::vector<uint8_t> qos;             // a joined session's QoS data (from the search)
 };
 std::mutex sessions_mutex;
 std::unordered_map<uint32_t, HostedSession> hosted_sessions;  // by session object
 std::unordered_map<uint64_t, std::vector<uint8_t>> qos_data;  // XNetQosListen data by key id
 uint64_t session_order = 0;
 uint8_t joined_session[kSessionInfoSize] = {};  // the last session we joined as a guest
+// Sessions we joined as a guest, by session object: their standby record (Matchmaking,
+// below) and, if a host migration makes us the host (XSessionMigrateHost), the session we
+// then publish as ours.
+std::unordered_map<uint32_t, HostedSession> guest_sessions;
 
 uint64_t SessionId(const uint8_t* info) {
   return uint64_t(Load32(info)) << 32 | Load32(info + 4);
 }
 
-void PublishMatchLocked();  // Matchmaking, below
+void PublishMatchLocked();    // Matchmaking, below
+void PublishStandbyLocked();  // the same, for a session we joined
+uint32_t SearchedPlaylistLocked();
+std::vector<uint8_t> FoundQos(uint64_t session_id);
 
 // The bytes our presence carries after the status line (friends read them back in
 // LiveFriend::extra): slots (max public, max private, filled public, filled private, one
@@ -316,8 +330,20 @@ void XSessionCreate(uint8_t* base, uint32_t buffer) {
   const uint32_t info_ptr = Load32(GuestPtr(base, buffer + 20)), nonce_ptr = Load32(GuestPtr(base, buffer + 24));
   if (!info_ptr) return;
   if (!(flags & kSessionHost)) {  // joining someone's session: remember it for invites
+    HostedSession g{};
+    g.flags = flags;
+    g.max_public = Load32(GuestPtr(base, buffer + 8));
+    g.max_private = Load32(GuestPtr(base, buffer + 12));
+    std::memcpy(g.info, GuestPtr(base, info_ptr), kSessionInfoSize);
+    REXLOG_INFO("FORZA_LIVE: joining session {:016X} (flags {:08X}, {} public + {} private slots)",
+                SessionId(g.info), flags, g.max_public, g.max_private);
+    g.qos = FoundQos(SessionId(g.info));
     std::lock_guard<std::mutex> lock(sessions_mutex);
-    std::memcpy(joined_session, GuestPtr(base, info_ptr), kSessionInfoSize);
+    std::memcpy(joined_session, g.info, kSessionInfoSize);
+    g.order = ++session_order;
+    g.playlist = SearchedPlaylistLocked();
+    guest_sessions[object] = g;
+    PublishStandbyLocked();
     return;
   }
   HostedSession s{};
@@ -343,6 +369,7 @@ void XSessionCreate(uint8_t* base, uint32_t buffer) {
 // XSessionDelete {session object, ...}
 void XSessionDelete(uint8_t* base, uint32_t buffer) {
   std::lock_guard<std::mutex> lock(sessions_mutex);
+  if (guest_sessions.erase(Load32(GuestPtr(base, buffer)))) PublishStandbyLocked();
   auto it = hosted_sessions.find(Load32(GuestPtr(base, buffer)));
   if (it == hosted_sessions.end()) return;
   qos_data.erase(SessionId(it->second.info));
@@ -361,6 +388,9 @@ void XSessionModify(uint8_t* base, uint32_t buffer) {
   it->second.flags = (it->second.flags & ~kModifiers) | (Load32(GuestPtr(base, buffer + 4)) & kModifiers);
   it->second.max_public = Load32(GuestPtr(base, buffer + 8));
   it->second.max_private = Load32(GuestPtr(base, buffer + 12));
+  REXLOG_INFO("FORZA_LIVE: session {:016X} modified: flags {:08X}, {} public + {} private slots",
+              SessionId(it->second.info), it->second.flags, it->second.max_public,
+              it->second.max_private);
   PublishPresenceLocked();
   PublishMatchLocked();
 }
@@ -370,9 +400,12 @@ void XSessionModify(uint8_t* base, uint32_t buffer) {
 void XSessionMembers(uint8_t* base, uint32_t buffer, bool join) {
   const uint32_t count = Load32(GuestPtr(base, buffer + 4)), privates = Load32(GuestPtr(base, buffer + 16));
   std::lock_guard<std::mutex> lock(sessions_mutex);
-  auto it = hosted_sessions.find(Load32(GuestPtr(base, buffer)));
-  if (it == hosted_sessions.end()) return;
-  HostedSession& s = it->second;
+  const uint32_t object = Load32(GuestPtr(base, buffer));
+  auto it = hosted_sessions.find(object);
+  const bool hosted = it != hosted_sessions.end();
+  auto guest = guest_sessions.find(object);
+  if (!hosted && guest == guest_sessions.end()) return;
+  HostedSession& s = hosted ? it->second : guest->second;
   for (uint32_t i = 0; i < count && i < 16; ++i) {
     const bool is_private = join && privates && Load32(GuestPtr(base, privates + 4 * i)) != 0;
     uint32_t& filled = is_private ? s.filled_private : s.filled_public;
@@ -384,8 +417,56 @@ void XSessionMembers(uint8_t* base, uint32_t buffer, bool join) {
       --s.filled_private;
     }
   }
+  REXLOG_INFO("FORZA_LIVE: {} session {:016X}: {} {} player(s), {}/{} public slots filled",
+              hosted ? "hosted" : "joined", SessionId(s.info), join ? "joined" : "left", count,
+              s.filled_public, s.max_public);
+  if (!hosted) return;
   PublishPresenceLocked();
   PublishMatchLocked();
+}
+
+// XSessionMigrateHost (0xB001E) {session object, XSESSION_INFO*, user index, 3 reserved}:
+// after the host left, the console that takes over calls it with a local user index and
+// receives the session's new info (the session id stays, the host address becomes
+// ours); the others call it with XUSER_INDEX_NONE and the info the new host sent them.
+// The SDK answers success and leaves the info alone, so the new host still advertised
+// the old one. We publish the migrated session as ours (matchmaking and presence), so
+// players who search or join later find the new host.
+void XSessionMigrateHost(uint8_t* base, uint32_t buffer) {
+  const uint32_t object = Load32(GuestPtr(base, buffer)), info_ptr = Load32(GuestPtr(base, buffer + 4));
+  const uint32_t user = Load32(GuestPtr(base, buffer + 8));
+  if (!info_ptr) return;
+  std::lock_guard<std::mutex> lock(sessions_mutex);
+  auto guest = guest_sessions.find(object);
+  if (user == 0xFF) {  // XUSER_INDEX_NONE: someone else is the new host
+    if (guest != guest_sessions.end()) std::memcpy(guest->second.info, GuestPtr(base, info_ptr), kSessionInfoSize);
+    std::memcpy(joined_session, GuestPtr(base, info_ptr), kSessionInfoSize);
+    REXLOG_INFO("FORZA_LIVE: host migration: session {:016X} has a new host",
+                SessionId(GuestPtr(base, info_ptr)));
+    return;
+  }
+  HostedSession s{};
+  if (guest != guest_sessions.end()) {
+    s = guest->second;
+    guest_sessions.erase(guest);
+  } else if (hosted_sessions.count(object)) {
+    s = hosted_sessions[object];
+  } else {
+    std::memcpy(s.info, joined_session, kSessionInfoSize);
+    s.flags = 0x2D;  // host, stats, matchmaking, peer network: Forza's game sessions
+    s.max_public = 8;
+  }
+  s.flags |= kSessionHost;
+  forza::LiveSelfXnAddr(s.info + 8);
+  std::memcpy(GuestPtr(base, info_ptr), s.info, kSessionInfoSize);
+  s.order = ++session_order;
+  hosted_sessions[object] = s;
+  REXLOG_INFO("FORZA_LIVE: host migration: we host session {:016X} now (flags {:08X}, {}/{} "
+              "public slots filled)", SessionId(s.info), s.flags, s.filled_public, s.max_public);
+  if (!s.playlist) s.playlist = SearchedPlaylistLocked();
+  PublishPresenceLocked();
+  PublishMatchLocked();
+  PublishStandbyLocked();
 }
 
 // XSessionSearchByIds {user, id count, ids, results size, results, ...} (0xB0060) and
@@ -509,7 +590,8 @@ uint32_t XInviteGetAcceptedInfo(uint8_t* base, uint32_t args) {
 // value u32), the QoS data (u16 length + bytes).
 
 constexpr uint32_t kSessionUsesMatchmaking = 0x8;
-constexpr uint32_t kPropertyHopper = 0x10000015;
+constexpr uint32_t kPropertyHopper = 0x10000015;       // Reach's hopper id
+constexpr uint32_t kPropertyForzaHopper = 0x10000030;  // Forza's (Find Game's searches)
 
 struct UserValue {
   uint8_t type = 0;
@@ -518,6 +600,7 @@ struct UserValue {
 std::unordered_map<uint32_t, UserValue> user_properties;  // ours, by property id
 std::unordered_map<uint32_t, uint32_t> user_contexts;     // by context id
 bool match_published = false;
+bool standby_published = false;
 uint32_t match_playlist = 0;  // what we last searched for: the playlist our session is for
 
 // A session a search found: its record, and the QoS data lookups answer with.
@@ -558,27 +641,20 @@ void XUserSetContext(uint8_t* base, uint32_t buffer) {
 // Our session's playlist: the property if we set it, else what we search for (Reach
 // sets the hopper id only on its searches).
 uint32_t PlaylistLocked() {
-  auto it = user_properties.find(kPropertyHopper);
+  auto it = user_properties.find(kPropertyForzaHopper);
+  if (it == user_properties.end()) it = user_properties.find(kPropertyHopper);
   return it == user_properties.end() ? match_playlist : Load32(it->second.value);
 }
 
-// Publishes the newest matchmaking session we host, or withdraws ours. Needs
-// sessions_mutex.
-void PublishMatchLocked() {
-  const HostedSession* best = nullptr;
-  for (const auto& [object, s] : hosted_sessions) {
-    if ((s.flags & kSessionUsesMatchmaking) && (!best || s.order > best->order)) best = &s;
-  }
-  if (!best) {
-    if (match_published) forza::LiveSendMatch(false, {0});
-    match_published = false;
-    return;
-  }
+// A session record (above) for MATCH_PUBLISH: op (1 hosted, 2 standby), playlist, then the
+// record advertising `info`.
+std::vector<uint8_t> MatchRecord(uint8_t op, uint32_t playlist, const uint8_t* info,
+                                 const HostedSession& s, const std::vector<uint8_t>& qos) {
   std::vector<uint8_t> body(5);
-  body[0] = 1;
-  Store32(body.data() + 1, PlaylistLocked());
-  body.insert(body.end(), best->info, best->info + kSessionInfoSize);
-  for (uint32_t n : {best->max_public, best->max_private, best->filled_public, best->filled_private}) {
+  body[0] = op;
+  Store32(body.data() + 1, playlist);
+  body.insert(body.end(), info, info + kSessionInfoSize);
+  for (uint32_t n : {s.max_public, s.max_private, s.filled_public, s.filled_private}) {
     body.push_back(uint8_t(std::min<uint32_t>(n, 255)));
   }
   body.push_back(uint8_t(std::min<size_t>(user_properties.size(), 32)));
@@ -599,13 +675,66 @@ void PublishMatchLocked() {
     Store32(body.data() + body.size() - 8, id);
     Store32(body.data() + body.size() - 4, value);
   }
+  const size_t size = std::min<size_t>(qos.size(), 1000);
+  body.push_back(uint8_t(size >> 8));
+  body.push_back(uint8_t(size));
+  body.insert(body.end(), qos.begin(), qos.begin() + size);
+  return body;
+}
+
+// Publishes the newest matchmaking session we host, or withdraws ours. Needs
+// sessions_mutex.
+void PublishMatchLocked() {
+  const HostedSession* best = nullptr;
+  for (const auto& [object, s] : hosted_sessions) {
+    if ((s.flags & kSessionUsesMatchmaking) && (!best || s.order > best->order)) best = &s;
+  }
+  if (!best) {
+    if (match_published) forza::LiveSendMatch(false, {0});
+    match_published = false;
+    return;
+  }
   auto it = qos_data.find(SessionId(best->info));
-  const size_t qos = it == qos_data.end() ? 0 : std::min<size_t>(it->second.size(), 1000);
-  body.push_back(uint8_t(qos >> 8));
-  body.push_back(uint8_t(qos));
-  if (qos) body.insert(body.end(), it->second.begin(), it->second.begin() + qos);
-  forza::LiveSendMatch(false, body);
+  const uint32_t playlist = best->playlist ? best->playlist : PlaylistLocked();
+  forza::LiveSendMatch(false, MatchRecord(1, playlist, best->info, *best,
+                                          it == qos_data.end() ? std::vector<uint8_t>() : it->second));
   match_published = true;
+}
+
+// Forza's game host can leave a free-roam world without the session changing hands at
+// the XSession level: the game picks a new host among the others itself and calls no
+// XSessionMigrateHost, so nobody advertised the world any more and later players
+// opened new ones. A guest therefore publishes the matchmaking session it joined as a
+// standby record: its info with our address as the host, its playlist and the QoS data
+// we found it with. The server advertises it only while no player hosts that session
+// id (forza_live_server.py), i.e. after the host left, so searchers join the players
+// still in that world. Needs sessions_mutex.
+void PublishStandbyLocked() {
+  const HostedSession* best = nullptr;
+  for (const auto& [object, g] : guest_sessions) {
+    if ((g.flags & kSessionUsesMatchmaking) && (!best || g.order > best->order)) best = &g;
+  }
+  if (!best) {
+    if (standby_published) forza::LiveSendMatch(false, {3});
+    standby_published = false;
+    return;
+  }
+  uint8_t info[kSessionInfoSize];
+  std::memcpy(info, best->info, kSessionInfoSize);
+  forza::LiveSelfXnAddr(info + 8);
+  HostedSession slots = *best;
+  slots.filled_public = 1;  // the server counts the session's remaining players
+  slots.filled_private = 0;
+  forza::LiveSendMatch(false, MatchRecord(2, best->playlist, info, slots, best->qos));
+  standby_published = true;
+}
+
+uint32_t SearchedPlaylistLocked() { return match_playlist; }
+
+std::vector<uint8_t> FoundQos(uint64_t session_id) {
+  std::lock_guard<std::mutex> lock(match_mutex);
+  auto it = found_qos.find(session_id);
+  return it == found_qos.end() ? std::vector<uint8_t>() : it->second;
 }
 
 // Parses one record of a search answer; false when it is cut short.
@@ -637,15 +766,21 @@ bool ParseRecord(const uint8_t* p, size_t n, FoundSession& s) {
 // XUSER_PROPERTY is {id, pad, XUSER_DATA {type u8, pad, value at +8}} (0x18 bytes),
 // XUSER_CONTEXT {id, value}. Results as XSessionSearch above, with each session's
 // properties and contexts after them.
-uint32_t SearchSessions(uint8_t* base, uint32_t max_results, uint32_t property_count,
-                        uint32_t properties, uint32_t results_size, uint32_t results) {
+uint32_t SearchSessions(uint8_t* base, uint32_t procedure, uint32_t max_results,
+                        uint32_t property_count, uint32_t properties, uint32_t results_size,
+                        uint32_t results) {
   constexpr uint32_t kResultSize = 0x5C, kPropertySize = 0x18;
   if (!results || results_size < 8) return kInvalidArg;
   uint32_t playlist = 0;
   for (uint32_t i = 0; i < property_count && i < 64 && properties; ++i) {
     const uint8_t* prop = GuestPtr(base, properties + kPropertySize * i);
-    if (Load32(prop) == kPropertyHopper) playlist = Load32(prop + 0x10);
+    if (Load32(prop) == kPropertyHopper || Load32(prop) == kPropertyForzaHopper) {
+      playlist = Load32(prop + 0x10);
+    }
   }
+  // Find Game (procedure 4) searches for its playlist's hopper id in 0x10000030, Find
+  // Custom Game (procedure 5) for the game type tab's value, which public custom games
+  // set in the same property on their host (free roam: 8): either way the key matches.
   {
     std::lock_guard<std::mutex> lock(sessions_mutex);
     if (playlist != match_playlist) {
@@ -700,7 +835,8 @@ uint32_t SearchSessions(uint8_t* base, uint32_t max_results, uint32_t property_c
       extra += 8;
     }
   }
-  REXLOG_INFO("FORZA_LIVE: matchmaking search (playlist {}): {} sessions", playlist, count);
+  REXLOG_INFO("FORZA_LIVE: matchmaking search (procedure {}, key {}): {} sessions", procedure,
+              playlist, count);
   return kSuccess;
 }
 
@@ -709,15 +845,15 @@ uint32_t SearchSessions(uint8_t* base, uint32_t max_results, uint32_t property_c
 // properties, contexts, results size, results}.
 uint32_t XSessionSearchWeighted(uint8_t* base, uint32_t buffer) {
   const uint8_t* b = GuestPtr(base, buffer);
-  return SearchSessions(base, Load32(b + 8), Load32(b + 0x18) >> 16, Load32(b + 0x1C),
-                        Load32(b + 0x24), Load32(b + 0x28));
+  return SearchSessions(base, Load32(b), Load32(b + 8), Load32(b + 0x18) >> 16,
+                        Load32(b + 0x1C), Load32(b + 0x24), Load32(b + 0x28));
 }
 
 // XSessionSearch (0xFB/0xB0016) {procedure, user, max results, property count u16,
 // context count u16, properties, contexts, results size, results} and XSessionSearchEx
 // (0xB001C, the same and a user count; Forza's hopper search): the SDK answers
-// success with no results. Forza's playlists do not set Reach's hopper property, so its
-// searches find every session the room's players host for matchmaking (playlist 0).
+// success with no results. Forza's searches carry the playlist (hopper id) in property
+// 0x10000030, so a search finds the sessions hosted for the same playlist.
 uint32_t XSessionSearchPlain(uint8_t* base, uint32_t buffer) {
   const uint8_t* b = GuestPtr(base, buffer);
   std::string query;  // the searched properties (id=value) and contexts (id:value)
@@ -731,7 +867,7 @@ uint32_t XSessionSearchPlain(uint8_t* base, uint32_t buffer) {
   }
   REXLOG_INFO("FORZA_LIVE: XSessionSearch procedure {} max {}:{}", Load32(b), Load32(b + 8),
               query);
-  return SearchSessions(base, Load32(b + 8), Load32(b + 12) >> 16, Load32(b + 16),
+  return SearchSessions(base, Load32(b), Load32(b + 8), Load32(b + 12) >> 16, Load32(b + 16),
                         Load32(b + 24), Load32(b + 28));
 }
 
@@ -870,6 +1006,9 @@ uint32_t Handle(uint8_t* base, uint32_t app, uint32_t message, uint32_t arg1, ui
         break;
       case 0x000B0018:
         XSessionModify(base, arg1);
+        break;
+      case 0x000B001E:  // the SDK answers success; we fill the info first
+        XSessionMigrateHost(base, arg1);
         break;
       case 0x000B0012:
         XSessionMembers(base, arg1, true);

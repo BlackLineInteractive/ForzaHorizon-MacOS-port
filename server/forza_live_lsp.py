@@ -34,15 +34,30 @@ log = logging.getLogger("forza-live")
 
 DATA_DIR = "forza_live_data"
 DUMP = False
+# Find Game's lobby does not let a player into a free roam in progress ("WAITING FOR
+# PLAYERS TO FINISH GAME"); the world's rounds therefore end on a timer, and the players
+# waiting in the lobby load in with everyone at the next round (docs/online_vision.md).
+WORLD_ROUND_MINUTES = 10.0
 
 # The playlists "Find Game" offers. Hopper ids are Turn 10's: the game keeps per-hopper
 # options in its database (HopperRaces) and media/gametunablesettings
 # (Default{Races,Playground}HopperOptions.xml).
+# Find Game lists the first category's hoppers; "Horizon World" is its first row.
+WORLD_HOPPER = 3
 HOPPER_CATEGORIES = [
-    {"name": "Races", "description": "Race on routes the hopper picks.", "hopperStartIndex": 0},
-    {"name": "Playground", "description": "Playground games.", "hopperStartIndex": 1},
+    {"name": "Online", "description": "The shared world and races.", "hopperStartIndex": 0},
+    {"name": "Playground", "description": "Playground games.", "hopperStartIndex": 2},
 ]
 HOPPERS = [
+    # The shared world: online free roam (the game's own Quick Match playlist,
+    # DefaultPlaygroundHopperOptions.xml, is free roam through matchmaking too). Everyone
+    # who picks it is placed into the fullest world session with room (the Forza Live
+    # server answers the session search), or hosts a new one.
+    {"id": WORLD_HOPPER, "name": "Horizon World",
+     "description": "Free roam with everyone online. You join a world with room, "
+                    "or open a new one.",
+     "playerCount": 8, "allowVoteToSkip": False, "allowVoteToKick": False,
+     "shouldVoteCarClassBeforeLaunch": False, "intermissionTimeMs": 5000},
     {"id": 1, "name": "Races", "description": "We pick the routes, you pick the game type, "
                                               "and everyone votes for the Car class.",
      "playerCount": 8},
@@ -69,6 +84,16 @@ SEARCH_SETTINGS = {
     "sessionFilterSettings": SESSION_FILTER, "maxConnectAttemptsBeforeCreating": 3,
     "maxConnectSecondsBeforeCreating": 20, "maxWaitingForClientsToConnectSeconds": 20,
     "minPlayersToLaunch": 2, "intermissionTimeMs": 30000, "shortIntermissionTimeMs": 10000}
+# The world starts with its first player: nobody waits in a lobby for a second one.
+WORLD_SEARCH_SETTINGS = dict(SEARCH_SETTINGS, minPlayersToLaunch=1, intermissionTimeMs=5000,
+                             shortIntermissionTimeMs=5000, maxConnectAttemptsBeforeCreating=2,
+                             maxConnectSecondsBeforeCreating=10)
+
+
+def hopper_get_search_settings(xuid, body):
+    params, _ = x.decode(x.HopperGetSearchSettings_Params, body)
+    settings = WORLD_SEARCH_SETTINGS if params["hopperId"] == WORLD_HOPPER else SEARCH_SETTINGS
+    return x.reply(x.HopperGetSearchSettings_Results, {"settings": settings})
 
 
 def add_arguments(parser):
@@ -77,12 +102,17 @@ def add_arguments(parser):
                              "(default ./forza_live_data)")
     parser.add_argument("--dump-requests", action="store_true",
                         help="save every title server request to DATA_DIR/requests")
+    parser.add_argument("--world-round-minutes", type=float, default=WORLD_ROUND_MINUTES,
+                        help="length of a Horizon World free-roam round (default %(default)s; "
+                             "0: endless). Players who join a world in progress wait in its "
+                             "lobby until the round ends")
 
 
 def configure(args):
-    global DATA_DIR, DUMP
+    global DATA_DIR, DUMP, WORLD_ROUND_MINUTES
     DATA_DIR = args.data_dir
     DUMP = args.dump_requests
+    WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
     os.makedirs(DATA_DIR, exist_ok=True)
 
 
@@ -228,9 +258,12 @@ EMPTY_ANSWER = 4096  # zero bytes after the header for methods without a handler
 HOPPER_ROUNDS = {
     1: [(1, 322, 3), (2, 155, 1), (1, 107, 3), (2, 145, 1)],
     2: [(7, 317, 0)],
+    # Free roam (GameOptionPresets.xml's IDS_PresetFreeRoam) from the festival (track 1101,
+    # the custom game's default starting location), no end condition.
+    WORLD_HOPPER: [(7, 1101, 0)],
 }
 
-GAME_OPTIONS_XML = """<GameOptions GameTypePreset="{preset}" TrackId="{track}" UseTraffic="false"
+GAME_OPTIONS_XML = """<GameOptions GameTypePreset="{preset}"{filter} TrackId="{track}" UseTraffic="false"
     CollisionMode="Default" MaxPlayers="{players}" MaxAIPlayers="0" NumPlayerBuckets="1"
     NumTeams="0" HorizonTimeOfDayIsRandom="true" HorizonTimeOfDay="Invalid"
     PauseTimeOfDay="false" MinRecommendedCarClass="255" MaxRecommendedCarClass="255">
@@ -240,7 +273,7 @@ GAME_OPTIONS_XML = """<GameOptions GameTypePreset="{preset}" TrackId="{track}" U
     </Bucket>
   </Buckets>
   <StartingGridOptions StartType="OpenWorld" GridOrderingType="Random"/>
-  <EndConditionOptions Type="{end}" NumLaps="{laps}" EndRaceCounter="30.0"/>
+  <EndConditionOptions Type="{end}" NumLaps="{laps}"{time} EndRaceCounter="30.0"/>
   <ScoringOptions Type="TimeBased" BiggerIsBetter="0"/>
 </GameOptions>
 """
@@ -260,11 +293,17 @@ def hopper_get_game_options(xuid, body):
         rounds = HOPPER_ROUNDS.get(hopper, HOPPER_ROUNDS[1])
         preset, track, laps = rounds[round_num % len(rounds)]
         players = next((h["playerCount"] for h in HOPPERS if h["id"] == hopper), 8)
+        # A free roam (laps 0) has no end, or a timed one (Type "Time", seconds) in the world.
+        end, time_attr = ("NumLaps", "") if laps else ("None", "")
+        if hopper == WORLD_HOPPER and WORLD_ROUND_MINUTES > 0:
+            end, time_attr = "Time", ' Time="%d"' % round(WORLD_ROUND_MINUTES * 60)
         xml = GAME_OPTIONS_XML.format(
             preset=preset, track=track, laps=max(laps, 1), players=players,
-            end="None" if laps == 0 else "NumLaps").encode()
-        log.info("title: hopper %d round %d: preset %d track %d laps %d", hopper, round_num,
-                 preset, track, laps)
+            # the custom game's Free Roam preset sets it (GameOptionPresets.xml)
+            filter=' GameTypeFilterType="FreeRoam"' if preset == 7 else "",
+            end=end, time=time_attr).encode()
+        log.info("title: hopper %d round %d for %016X: preset %d track %d laps %d", hopper,
+                 round_num, xuid, preset, track, laps)
     return x.reply(x.HopperGetGameOptions_Results, {"gameOptionsXml": xml})
 
 
@@ -278,8 +317,7 @@ SERVICES = {
     ("OnlineProfile", "UpdateAll"): online_profile_update_all,
     ("OnlineProfile", "UpdateAllTables"): lambda xuid, body: x.reply(),
     ("Hopper", "GetList"): hopper_get_list,
-    ("Hopper", "GetSearchSettings"):
-        lambda xuid, body: x.reply(x.HopperGetSearchSettings_Results, {"settings": SEARCH_SETTINGS}),
+    ("Hopper", "GetSearchSettings"): hopper_get_search_settings,
     ("Hopper", "GetSessionListFilterSettings"):
         lambda xuid, body: x.reply(x.HopperGetSessionListFilterSettings_Results,
                                    {"settings": SESSION_FILTER}),
