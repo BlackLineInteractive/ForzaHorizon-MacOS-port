@@ -460,7 +460,10 @@ players, B jumps into A's world, then N events in a row, each checked on both co
 (`st.py` reads the online game: mode, state, in game, players, host, preset, max AI, AI
 difficulty) with a gdb dump of every thread on a hang; `t8.sh` the same solo; `t9.sh` B
 joins during the first event's wait. `FORZA_EVENT_TRACE=1` logs every removal with its
-guest call chain and the CPU drivers' owner and level.
+guest call chain and the CPU drivers' owner and level. The latest copies are in the
+agent scratchpad's `forza-mmo5/`, with `t10.sh` (players leaving, below), `t11.sh`-`t13.sh`
+(head-to-head challenges) and `carpos.py` (every car's kind and position, from
+`/proc/PID/mem`).
 
 ### The events
 
