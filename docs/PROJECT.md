@@ -444,6 +444,29 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
   - Cap: the round's `MaxPlayers` sizes the session (16 served -> 16 slots); the game's own
     UI and data stop at 8.
 
+- 2026-10-11 (later): **drop-in: the Horizon World is one endless free roam that players
+  JUMP IN to, and it starts with one player** (`src/hooks/world_drop_in.cpp`; details and
+  tests in `docs/online_vision.md`).
+  - Find Game runs as mode 7 of the online game (`*(0x83305CC4)+40`, set by `sub_828733A8`
+    from the launch `sub_8287D528`; Find Custom Game is 10, a custom host 8/9). Three things
+    hang on it, and the world (playlist 3, a preset 7 round, mode 7) now gets the custom
+    free roam's version of each: the "custom game" check `sub_82865340` answers yes at the
+    join-in-progress call sites (lobby label, JUMP IN button and its availability, the
+    host taking a joiner's ready flag, peers adding the joiner's car); the launch
+    `sub_8286A2E0` makes it race type 18 (online free roam flow) with HUD mode 17 instead
+    of 6 (online race) / 21 (hook on `sub_825548A0`); and a host alone in its lobby gets
+    the team/bucket check run (`+2152`, hook on `sub_82875FB8`), which Find Game otherwise
+    runs only when a remote player's status changes, so the 5 s intermission starts.
+  - Guest functions are weak symbols: a hook is a strong `extern "C" REX_FUNC(sub_X)` in
+    `src/` that calls `__imp__sub_X`; `ctx.lr` holds the guest return address, so one call
+    site can be told from another. No codegen or hint change, only a relink.
+  - Tested with two instances: solo start, drop-in (JUMP IN, about 30 s to be driving),
+    each seeing the other's car, the host leaving (the client reports the game's new host
+    to the server: `MATCH_PUBLISH` op 4, from the game's host flag `+344`) and rejoining,
+    and the host's END FREE ROAM (everyone back to the lobby and into the next round).
+  - The free roam flow ignores a timed end condition, so the server's world rounds are
+    endless by default now (`--world-round-minutes 0`).
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.

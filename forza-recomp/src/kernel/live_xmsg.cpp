@@ -56,6 +56,7 @@
 
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -601,7 +602,9 @@ std::unordered_map<uint32_t, UserValue> user_properties;  // ours, by property i
 std::unordered_map<uint32_t, uint32_t> user_contexts;     // by context id
 bool match_published = false;
 bool standby_published = false;
+bool standby_game_host = false;  // the game made us its host (forza::OnlineGameIsHost)
 uint32_t match_playlist = 0;  // what we last searched for: the playlist our session is for
+std::atomic<uint32_t> match_playlist_now{0};  // the same, for hooks (forza::LiveMatchPlaylist)
 
 // A session a search found: its record, and the QoS data lookups answer with.
 struct FoundSession {
@@ -646,8 +649,8 @@ uint32_t PlaylistLocked() {
   return it == user_properties.end() ? match_playlist : Load32(it->second.value);
 }
 
-// A session record (above) for MATCH_PUBLISH: op (1 hosted, 2 standby), playlist, then the
-// record advertising `info`.
+// A session record (above) for MATCH_PUBLISH: op (1 hosted, 2 standby, 4 standby of the
+// game's host), playlist, then the record advertising `info`.
 std::vector<uint8_t> MatchRecord(uint8_t op, uint32_t playlist, const uint8_t* info,
                                  const HostedSession& s, const std::vector<uint8_t>& qos) {
   std::vector<uint8_t> body(5);
@@ -708,7 +711,10 @@ void PublishMatchLocked() {
 // standby record: its info with our address as the host, its playlist and the QoS data
 // we found it with. The server advertises it only while no player hosts that session
 // id (forza_live_server.py), i.e. after the host left, so searchers join the players
-// still in that world. Needs sessions_mutex.
+// still in that world. Which of them the game made its new host is not visible at the
+// XSession level either; forza::LiveMatchTick watches the game's own host flag, and the
+// record then goes out as op 4 (standby of the game's host), which the server advertises
+// before the others. Needs sessions_mutex.
 void PublishStandbyLocked() {
   const HostedSession* best = nullptr;
   for (const auto& [object, g] : guest_sessions) {
@@ -717,6 +723,7 @@ void PublishStandbyLocked() {
   if (!best) {
     if (standby_published) forza::LiveSendMatch(false, {3});
     standby_published = false;
+    standby_game_host = false;
     return;
   }
   uint8_t info[kSessionInfoSize];
@@ -725,7 +732,8 @@ void PublishStandbyLocked() {
   HostedSession slots = *best;
   slots.filled_public = 1;  // the server counts the session's remaining players
   slots.filled_private = 0;
-  forza::LiveSendMatch(false, MatchRecord(2, best->playlist, info, slots, best->qos));
+  forza::LiveSendMatch(false, MatchRecord(standby_game_host ? 4 : 2, best->playlist, info, slots,
+                                          best->qos));
   standby_published = true;
 }
 
@@ -785,6 +793,7 @@ uint32_t SearchSessions(uint8_t* base, uint32_t procedure, uint32_t max_results,
     std::lock_guard<std::mutex> lock(sessions_mutex);
     if (playlist != match_playlist) {
       match_playlist = playlist;
+      match_playlist_now = playlist;
       PublishMatchLocked();
     }
   }
@@ -1150,6 +1159,21 @@ extern "C" REX_FUNC(__imp__XamShowGameInviteUI) {
 }
 
 namespace forza {
+// The playlist of our last matchmaking search (Find Game: the hopper id), 0 before one.
+uint32_t LiveMatchPlaylist() { return match_playlist_now.load(std::memory_order_relaxed); }
+
+// Every second (net.cpp): while we publish a standby record of a session someone else
+// hosted, tell the server when the game makes us (or stops making us) its host.
+void LiveMatchTick() {
+  const int host = OnlineGameIsHost();
+  std::lock_guard<std::mutex> lock(sessions_mutex);
+  if (!standby_published || host < 0 || bool(host) == standby_game_host) return;
+  standby_game_host = host;
+  REXLOG_INFO("FORZA_LIVE: the game {} the host of the session we joined",
+              host ? "made us" : "no longer has us as");
+  PublishStandbyLocked();
+}
+
 // An invite arrived: accept it for the player (XN_LIVE_INVITE_ACCEPTED, parameter: the
 // user index); the game then asks XInviteGetAcceptedInfo for it and joins, or tells the
 // player it can't right now.

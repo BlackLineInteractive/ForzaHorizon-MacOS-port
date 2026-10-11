@@ -58,6 +58,18 @@ void LiveInviteReceived(const LiveInvite& invite);
 void LiveSendMatch(bool search, const std::vector<uint8_t>& body);
 void LiveMatchResults(const uint8_t* body, size_t size);
 
+// The playlist our last matchmaking search was for (Find Game: the hopper id; 0 before the
+// first search). Hooks use it to tell the Horizon World from other playlists.
+uint32_t LiveMatchPlaylist();
+
+// Called about every second by the network thread: reports host changes of the
+// matchmaking session we joined (live_xmsg.cpp).
+void LiveMatchTick();
+
+// The online game's "this console hosts the session" flag: 1, 0, or -1 without an online
+// game (hooks/world_drop_in.cpp).
+int OnlineGameIsHost();
+
 // Called by the network thread when the roster changed (live_xmsg.cpp): tells the
 // game its friends' presence changed, or that friends came or went.
 void LiveRosterChanged(bool membership_changed);

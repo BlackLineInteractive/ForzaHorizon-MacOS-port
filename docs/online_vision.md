@@ -27,8 +27,9 @@ free roam:
 ## Phase 1 (built): the shared world, automatic placement
 
 **How to play:** Multiplayer, Find Game, **Horizon World** (the first playlist). Nothing
-else: the server either places you into an open world or you open a new one, and the
-next players are placed with you.
+else: the server either places you into an open world (its lobby offers **JUMP IN**, which
+drives you into the running free roam) or you open a new one and drive at once, alone, and
+the next players drop into yours. The world is an endless online free roam.
 
 ### The trigger: a "Horizon World" playlist in Find Game
 
@@ -63,37 +64,68 @@ Why this trigger:
   (8/8) is never offered. The game joins the first one it reaches
   (`maxConnectAttemptsBeforeCreating` 2, `maxConnectSecondsBeforeCreating` 10 in the
   world's search settings) and hosts a new world otherwise.
-- The first player in an empty world waits in its lobby ("WAITING FOR PLAYERS TO JOIN...")
-  until a second one arrives: the lobby launches with two players, and the search
-  settings' `minPlayersToLaunch` 1 does not change that. To find in the lobby code if a
-  lone player should drive at once.
+- The first player in an empty world drives at once: its lobby starts the 5 s
+  intermission with one player and loads the world (see "Solo start" below; before, it
+  waited with "WAITING FOR PLAYERS TO JOIN..." until a second player came).
 - The server logs every decision (`match #id 'name' playlist 3: 1 open session(s), first
   <session> from #host (1/8)` or `no open session, it hosts`), and its status page lists
   each player's published session (`match`: playlist, players, slots).
 
-### Players joining a world in progress: rounds
+### Joining a world in progress: drop-in (`src/hooks/world_drop_in.cpp`)
 
-Find Game's lobby never lets a player into a free roam already running: the joiner sits in
-the world's lobby with "GAME IN PROGRESS / WAITING FOR PLAYERS TO FINISH GAME" and is taken
-along when the round ends (the host's Retire ended it in the first tests; both then loaded
-into the next round). So the world's rounds end on a timer: the server serves the world
-round with `<EndConditionOptions Type="Time" Time="600">` (seconds;
-`--world-round-minutes`, default 10, 0 = endless). Then everyone, the waiting players
-included, goes back to the lobby and loads into the next round after the intermission (5 s
-in the world). Measured with a 90 s round: a TIME countdown in the HUD, then the lobby
-("FREE ROAM 01:30 MINS", "INTERMISSION"), then the next round by itself.
+Find Game runs its games differently from a custom game, and the difference is a mode
+of the online game (the object at `*(0x83305CC4)`, mode at `+40`, set by `sub_828733A8`
+when a game starts): Find Game is 7, Find Custom Game 10 (`sub_8287F2B8` picks 7 or 10 from
+the matchmaking kind), a custom game's host 8 (race) or 9 (free roam). Three things follow
+from it, and in the Horizon World (playlist 3, a free-roam round, mode 7) the client
+(`world_drop_in`, on by default) now gives each the custom free roam's behaviour:
 
-The game can do real join in progress, but only in a custom game's free roam: Find Custom
-Game, the FREE ROAM tab, the host's world: its lobby says "FREE ROAM IN PROGRESS" and
-offers **JUMP IN**, and the joiner drives into the running world without anyone reloading
-(tested). The lobby's text and its join path look at a mode value of the online game
-(`*(*(0x83305CC4) + 40)`, getter `sub_82D6AE20`; `sub_82865340` is "mode is 8, 9 or 10";
-the code at `0x8281B358` picks the label): a custom free roam runs as mode 9, Find Game's free roam
-as mode 7, which is the race-like flow (the HUD's TIME, RACE and LAP timers and PLACE
-1/2, a round that ends). Making Find Game's world run as mode 9 (where the mode is chosen at
-launch) would give the world join in progress and remove the rounds; that is the next
-step for phase 1. Until then Find Custom Game's Free Roam tab is the way into a running
-world without waiting, and the server lists the fullest open world first there too.
+1. **Join in progress.** `sub_82865340(mode)` is "custom game" (8, 9, 10). Only then does
+   the lobby of a game in progress say FREE ROAM IN PROGRESS (lobby state 10, the label
+   picked at `0x8281B358`) and offer **JUMP IN** (button 6 of the lobby's table, handler
+   `0x826EE1D0`; its filter needs "custom", and `0x82701018` makes it available), does
+   the host accept the joiner's ready flag while the game runs (`0x82893B1C`), and does
+   every peer add the car of a player whose status becomes "in game" (`0x8288DCD4`). In
+   Find Game the joiner sat in "GAME IN PROGRESS / WAITING FOR PLAYERS TO FINISH GAME".
+   The hook answers "custom" at those call sites only (by return address, plus
+   `0x82624B00` in the free roam); the lobby's other buttons and the game's options
+   (`0x828837A4`: the hopper's GetGameOptions, not a custom setup) stay Find Game's.
+   From the code (not measured): JUMP IN is offered once the free roam has run
+   `Online/Multiplayer/MinimumTimeToJumpInToFreeRoam` (20 s, `GlobalRegistry.xml`); the
+   lobby counts that down (`sub_82819670`).
+2. **The flow.** The launch (`sub_8286A2E0`) starts a custom game as race type 18, the
+   online free roam flow (`game_start_multiplayer_playground` in `gamemodes.zip`: co-op
+   challenges, joiners placed into the running world through `set_car_to_joining_session`),
+   with HUD mode 17; everything else as race type 6, an online race (the TIME/RACE/LAP
+   timers and PLACE 1/2 phase 1 saw, a timed end) with HUD mode 21. The type is the race
+   settings' `+44` (`sub_82C0F2C0`, read by `CGameTypeDecision`, `0x82909A38`: 18 =
+   multi_player_free_roam, 6 = multi_player_race). With only the join fixed, a player who
+   pressed JUMP IN in a race-type world stayed on the loading screen. The hook on
+   `sub_825548A0` (called from the launch) makes the world type 18 and HUD mode 17.
+3. **Solo start.** The host's lobby (`sub_8287F670`) starts the intermission once
+   `sub_82876D90` says ready: enough players (`+2016`, the search settings'
+   `minPlayersToLaunch`, 1 in the world), nobody still joining, and in Find Game the
+   team/bucket check done (`+2148`, `sub_82895018`, run by `sub_82875FB8` when `+2152` is
+   set, which happens when a remote player's status changes). A host alone never had it
+   run, so it waited for a second player. For a world host alone in its lobby the hook on
+   `sub_82875FB8` sets the flag; the check runs, the 5 s intermission starts and the
+   world loads with one player.
+
+Measured (two instances): A alone picked Horizon World; the world launched after the 5 s
+intermission and A was driving about 40 s after picking it, with the free roam HUD ("SELECT A CO-OP CHALLENGE FROM THE PAUSE MENU", no timers or place).
+B picked it, was placed into A's world, saw FREE ROAM IN PROGRESS and JUMP IN, and drove in
+the world about 30 s after pressing it (B's HUD "WAITING FOR HOST TO SELECT A CO-OP
+CHALLENGE", both names in both lists, A's car with its tag in B's view after A drove up).
+
+The world has no timed end now: the free roam flow ignores the round's
+`<EndConditionOptions Type="Time">` (a 60 s round served from `hoppers/3.xml` ran on
+past 2 minutes, no TIME in the HUD). So the server's rounds are endless by default
+(`--world-round-minutes 0`); the option is kept for clients with `world_drop_in = false`,
+which get phase 1's race-type world where late players wait for the round's end. A round
+still ends when the host picks **END FREE ROAM** in the pause menu ("All players will
+return to the lobby"): everyone goes back to the lobby, the intermission runs and the
+next round loads with everyone (tested; the host asks `GetGameOptions` for it, so the
+next round is the server's choice). Players (host or not) can QUIT at any time.
 
 ### Session cap: 8
 
@@ -125,11 +157,18 @@ world without waiting, and the server lists the fullest open world first there t
   advertised by its oldest remaining member with the number of members as its filled
   slots. Tested: A (host) quit, B kept driving alone; A picked Horizon World again and the
   server placed it into B's world (`first 86f19a2a1352a5db from #1206 'DriverB'`), B's
-  game accepted the join as the new host, and both drove together after the round.
-- With more than two players the game picks the new host itself; if it is not the oldest
-  remaining member, a searcher connects to a guest. The server cannot see the game's
-  choice; a fix would read it from the game (who answers the joins) or let the guest
-  refuse and fall back to the next session.
+  game accepted the join as the new host, and both drove together after the round. With
+  drop-in A now jumps straight into B's world (test 9).
+- Which member the game makes its new host (with more than two players it need not be
+  the oldest) is visible in the game: the online game's host flag (`+344`,
+  `sub_82865378`) turns on for it. The client watches that flag every second while it
+  publishes a standby (`forza::LiveMatchTick`, `OnlineGameIsHost` in
+  `world_drop_in.cpp`) and then sends its standby as op 4 ("standby of the game's host";
+  op 2 again if the flag goes off); the server advertises an op 4 member before the
+  oldest one. Tested with two players: A (host) quit, B's flag turned on within a second
+  (`the game made us the host of the session we joined`, server: `DriverB is now the
+  game's host of ...`), and A was placed into B's world. Not tested with three players
+  (two instances on this machine).
 - `XSessionMigrateHost` (0xB001E) is handled anyway (the SDK left the info untouched): the
   new host gets its own address in the info and publishes the session as its own.
 
@@ -148,6 +187,21 @@ world without waiting, and the server lists the fullest open world first there t
 5. Join in progress in a custom free roam: B jumped into A's running custom free roam
    (`..._05_custom_free_roam_jump_in.jpg`).
 
+Drop-in (`world_drop_in.cpp`, server rounds endless):
+
+6. Solo start: A alone picked Horizon World and drove in the world after the 5 s
+   intermission, free roam HUD (`..._07_solo_start_free_roam_hud.jpg`).
+7. Drop-in: B picked it, was placed into A's world, its lobby showed FREE ROAM IN
+   PROGRESS and JUMP IN (`..._08_find_game_world_jump_in.jpg`); B pressed it and drove in
+   A's world about 30 s later (`..._06_drop_in_A_top_B_bottom.jpg`).
+8. Seen: after A drove up to Race Central, B saw A's car with its tag
+   (`..._10_B_host_sees_A_car_after_jump_in.jpg`).
+9. Host leaves: A quit; B's game made B the host (op 4 to the server); A picked Horizon
+   World, was placed into B's world and jumped in
+   (`..._09_host_left_A_jumped_into_B_world.jpg`).
+10. END FREE ROAM (host B): both went to the lobby and loaded into the next round together
+   after the intermission. A 60 s timed round did not end the free roam (2+ minutes).
+
 ## Next phases (designs)
 
 ### Phase 2: events from the world, a 30 s wait lobby, AI fill
@@ -157,26 +211,38 @@ What phase 1 showed: the world is a playlist whose rounds the server serves. The
 (hopperId, roundNum)`, seen from the host only, and from the new host after a migration),
 and the round's GameOptions XML carries everything an event needs: `GameTypePreset`
 (1 circuit, 2 point to point), `TrackId`, the bucket's `CarRestrictions`, `MaxAIPlayers`,
-`AIDifficulty`, laps.
+`AIDifficulty`, laps. Since drop-in, a world round is an endless online free roam (race
+type 18): it ends only through the host's END FREE ROAM, which brings everyone back to the
+lobby, and the lobby launches the next round after the intermission. The drop-in hooks
+apply to free-roam rounds (preset 7) only, so a race round served on the world's playlist
+runs as Find Game's race (type 6): late players wait in the lobby for it to end instead of
+dropping into a running race, which is what a race wants.
 
 - **Event flow:** an event is a round. The world's rotation becomes world round, event,
   world round, ...; the event is picked from the game database (`Events` with its
   `EventRestrictions` -> the bucket's `CarRestrictions`, the event's track and laps). Every
   player picks a car from their own garage in the lobby (the lobby already has SELECT CAR
   and LOAD CAR SETUP, filtered by the bucket's restrictions), so "join with your own cars
-  under the event's conditions" is the lobby as it is. Players who want no event stay
-  out by leaving to a world-only playlist.
-- **Starting an event from the world:** the game has no way for a non-host to start
-  anything in online free roam (the host starts co-op challenges from the pause menu).
-  Simplest: the next timed round is an event, announced in the world. Better: a request
-  from the player (a festival event marker reached in the world, or a pause-menu entry)
-  sent to the server, which ends the world round early (needs a client hook on the host
-  that ends the round, the same path as Retire) and serves the event as the next round.
-- **30 s wait lobby:** the playlist's intermission is it: `intermissionTimeMs` 30000 in the
-  hopper and the search settings. The lobby shows INTERMISSION with a countdown; players
-  who join the session during it are on the grid (they come in through the same
-  matchmaking). A grid full of humans starting early would need `minPlayersToLaunch` =
-  max players plus a check on the intermission's end; not seen yet.
+  under the event's conditions" is the lobby as it is. Everyone in the world session goes
+  to the event (one session of up to 8); a player who wants none quits and picks Horizon
+  World again, which places it into another world or opens one.
+- **Starting an event from the world:** a non-host cannot start anything in online free
+  roam (the host starts co-op challenges from the pause menu), and timed rounds no longer
+  end the world. The way out is the host's END FREE ROAM: a client hook on the world's
+  host that takes that path when the server asks (an event requested by a player: a
+  festival event marker reached in the world, or a pause-menu entry, sent to the server),
+  then the server answers the next `GetGameOptions` with the event. The END FREE ROAM
+  action is still to trace (pause menu item, then its confirm; the free roam's
+  `CUnloadToPreGame destination="race_lobby"`).
+- **30 s wait lobby:** the event round's intermission. The intermission comes from the
+  playlist's search settings, which the game copies when the playlist is picked (`+2020`,
+  `+2024` of the online game: 5000 ms for the world, which its solo start should keep), so
+  a 30 s event wait needs those two set to 30000 before the event round launches (a client
+  hook, or a separate event playlist). The lobby shows INTERMISSION with a countdown;
+  players who join the session during it are on the grid. A grid full of humans starting
+  early would need `minPlayersToLaunch` = max players plus a check on the intermission's
+  end; not seen yet. After the event, END of the race brings everyone back to the lobby
+  and the server serves the world (free roam) again.
 - **AI fill:** the host asks for the round's options at launch, after the intermission, so
   the human count is final then: the server reads the host's published session (filled
   public slots), sets `MaxAIPlayers` = 8 - humans and `AIDifficulty` from the human share:

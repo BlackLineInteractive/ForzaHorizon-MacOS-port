@@ -905,7 +905,7 @@ class VNet {
 
   // Registration, keep-alive, presence, the roster and hole punching.
   void LiveLoop() {
-    Clock::time_point next_hello{}, next_resolve{}, next_list{};
+    Clock::time_point next_hello{}, next_resolve{}, next_list{}, next_match{};
     bool resolved = false;
     for (;;) {
       const auto now = Clock::now();
@@ -951,6 +951,10 @@ class VNet {
         roster_changed_ = 0;
       }
       if (roster_changed) forza::LiveRosterChanged(roster_changed == 2);
+      if (resolved && now >= next_match) {
+        next_match = now + std::chrono::seconds(1);
+        forza::LiveMatchTick();
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
   }

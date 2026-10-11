@@ -133,9 +133,13 @@ randomizedOrder, intermissionTimeMs}`. A category holds the hoppers from its
 wins < `maxAllowedWins` and races >= `minAllowedRaces` (beginner playlists). Our hoppers:
 3 "Horizon World" and 1 "Races" (category Online), 2 "Playground Games". Horizon World is
 the shared free-roam world (`docs/online_vision.md`): preset 7 rounds from the festival
-(track 1101), `GameTypeFilterType="FreeRoam"`, timed (`EndConditionOptions Type="Time"
-Time=` seconds, `--world-round-minutes`), its own search settings (intermission 5 s, 2
-connect attempts); `GetSearchSettings` is answered per hopper.
+(track 1101), `GameTypeFilterType="FreeRoam"`, endless (`EndConditionOptions Type="None"`;
+the client runs them as an online free roam that players JUMP IN to, which has no timed
+end anyway; `--world-round-minutes` serves `Type="Time" Time=` seconds for clients with
+`world_drop_in` off), its own search settings (`minPlayersToLaunch` 1, intermission 5 s, 2
+connect attempts); `GetSearchSettings` is answered per hopper. The game copies a
+playlist's search settings into its online game object when the playlist is picked
+(`+2016` min players to launch, `+2020`/`+2024` the intermission times).
 
 `GetGameOptions` returns `gameOptionsXml`: the round's options in the format of the game's
 own `media/gametunablesettings.zip` `DefaultRacesHopperOptions.xml` and

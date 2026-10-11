@@ -292,8 +292,10 @@ class ForzaLive(asyncio.DatagramProtocol):
     # Standby records: a player in a session someone else hosts publishes it with its own
     # address as the host (op 2). Forza's game picks a new host among the remaining
     # players when its host leaves, without telling Xbox LIVE, so once nobody hosts a
-    # session id any more, its standby records stand in for it: searchers get the oldest
-    # remaining member's record, with the number of members as the filled slots.
+    # session id any more, its standby records stand in for it: searchers get the record
+    # of the member the game made its host (the client sees the game's host flag and
+    # sends op 4 instead of op 2), else of the oldest remaining member, with the number of
+    # members as the filled slots.
 
     def standby_sessions(self, src, key):
         """Advertisable standby sessions for playlist key: [(peer, record, since)]."""
@@ -309,7 +311,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         for sid, members in groups.items():
             if own and own[1][:8] == sid:
                 continue  # the searcher is in it already
-            members.sort(key=lambda p: p.standby[2])
+            members.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
             record = bytearray(members[0].standby[1])
             if len(record) >= SESSION_INFO_SIZE + 4:
                 record[SESSION_INFO_SIZE + 2] = min(len(members), 255)
@@ -317,11 +319,18 @@ class ForzaLive(asyncio.DatagramProtocol):
         return found
 
     def on_match(self, peer, kind, body):
-        if kind == MATCH_PUBLISH and body[0] in (2, 3):
-            # op 2: standby (search key u32 + the record), op 3: withdraw it
+        if kind == MATCH_PUBLISH and body[0] in (2, 3, 4):
+            # op 2: standby (search key u32 + the record), op 4: the same from the player
+            # the game made the session's host, op 3: withdraw it
             if body[0] == 3:
                 peer.standby = None
+                peer.standby_host = False
             else:
+                host = body[0] == 4
+                if host != getattr(peer, "standby_host", False):
+                    log.info("match #%d %r %s the game's host of %s", peer.id, peer.name,
+                             "is now" if host else "is no longer", body[5:13].hex())
+                peer.standby_host = host
                 (key,) = struct.unpack_from(">I", body, 1)
                 record = body[5:5 + MAX_MATCH_RECORD]
                 old = getattr(peer, "standby", None)

@@ -34,10 +34,13 @@ log = logging.getLogger("forza-live")
 
 DATA_DIR = "forza_live_data"
 DUMP = False
-# Find Game's lobby does not let a player into a free roam in progress ("WAITING FOR
-# PLAYERS TO FINISH GAME"); the world's rounds therefore end on a timer, and the players
-# waiting in the lobby load in with everyone at the next round (docs/online_vision.md).
-WORLD_ROUND_MINUTES = 10.0
+# The world's rounds are endless: the client (world_drop_in, on by default) runs them as
+# an online free roam that later players JUMP IN to, and a free roam has no timed end.
+# Clients with world_drop_in off run them as Find Game's race-like free roam, whose lobby
+# does not let a player into a game in progress ("WAITING FOR PLAYERS TO FINISH GAME");
+# for them a round length (minutes) ends each round on a timer, and the players waiting in
+# the lobby load in with everyone at the next round (docs/online_vision.md).
+WORLD_ROUND_MINUTES = 0.0
 
 # The playlists "Find Game" offers. Hopper ids are Turn 10's: the game keeps per-hopper
 # options in its database (HopperRaces) and media/gametunablesettings
@@ -54,8 +57,8 @@ HOPPERS = [
     # who picks it is placed into the fullest world session with room (the Forza Live
     # server answers the session search), or hosts a new one.
     {"id": WORLD_HOPPER, "name": "Horizon World",
-     "description": "Free roam with everyone online. You join a world with room, "
-                    "or open a new one.",
+     "description": "Free roam with everyone online. JUMP IN to a world with room, "
+                    "or open a new one and drive at once.",
      "playerCount": 8, "allowVoteToSkip": False, "allowVoteToKick": False,
      "shouldVoteCarClassBeforeLaunch": False, "intermissionTimeMs": 5000},
     {"id": 1, "name": "Races", "description": "We pick the routes, you pick the game type, "
@@ -84,7 +87,8 @@ SEARCH_SETTINGS = {
     "sessionFilterSettings": SESSION_FILTER, "maxConnectAttemptsBeforeCreating": 3,
     "maxConnectSecondsBeforeCreating": 20, "maxWaitingForClientsToConnectSeconds": 20,
     "minPlayersToLaunch": 2, "intermissionTimeMs": 30000, "shortIntermissionTimeMs": 10000}
-# The world starts with its first player: nobody waits in a lobby for a second one.
+# The world starts with its first player: nobody waits in a lobby for a second one (this
+# and the client's world_drop_in, which runs the launch check a host alone never ran).
 WORLD_SEARCH_SETTINGS = dict(SEARCH_SETTINGS, minPlayersToLaunch=1, intermissionTimeMs=5000,
                              shortIntermissionTimeMs=5000, maxConnectAttemptsBeforeCreating=2,
                              maxConnectSecondsBeforeCreating=10)
@@ -103,9 +107,10 @@ def add_arguments(parser):
     parser.add_argument("--dump-requests", action="store_true",
                         help="save every title server request to DATA_DIR/requests")
     parser.add_argument("--world-round-minutes", type=float, default=WORLD_ROUND_MINUTES,
-                        help="length of a Horizon World free-roam round (default %(default)s; "
-                             "0: endless). Players who join a world in progress wait in its "
-                             "lobby until the round ends")
+                        help="length of a Horizon World round in minutes (default "
+                             "%(default)s: endless). Only for clients with world_drop_in off, "
+                             "whose players wait in the lobby until the round ends; with "
+                             "drop-in the world is a free roam without a timed end")
 
 
 def configure(args):

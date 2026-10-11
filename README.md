@@ -126,13 +126,15 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   `FORZA_GAMERTAG` is set) is kept in `~/.local/share/forza/4D5309C9/live_identity.txt`.
   Everyone in the server's room is your friend.
   **The shared world:** Multiplayer, Find Game, **Horizon World** (the first playlist).
-  The server puts you into the fullest open world (8 players each) or you open a new one,
-  and everyone who picks it after you is placed with you. A player who arrives while the
-  world's free roam is running waits in its lobby until the round ends (rounds last 10
-  minutes; `--world-round-minutes` on the server, 0 for endless) and then drives with
-  everyone. When the world's host leaves, the others keep driving and the next players are
-  placed with them. To drop into a running free roam at once: Find Custom Game, the FREE
-  ROAM tab, a world, JUMP IN (someone has to have started a public custom Free Roam).
+  The server puts you into the fullest open world (8 players each) or you open a new one
+  and start driving at once, alone, and everyone who picks it after you is placed with
+  you: their lobby says FREE ROAM IN PROGRESS, and **JUMP IN** drives them into the
+  running world. The world is an endless online free roam (co-op challenges from the
+  host's pause menu); when its host leaves, the others keep driving and the next players
+  are placed with them. The host's END FREE ROAM takes everyone back to the lobby, and the
+  world starts again after 5 s. `world_drop_in = false` in `forza.toml` turns this off
+  (the world is then Find Game's race-like free roam, which a late player only enters
+  after the round; `--world-round-minutes` on the server ends those rounds on a timer).
   Details: [`docs/online_vision.md`](docs/online_vision.md).
   To play together in a party: everyone opens
   Multiplayer; one player picks Invite Friends in the party lobby (there is no Guide, so
