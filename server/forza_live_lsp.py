@@ -119,6 +119,9 @@ def add_arguments(parser):
                         help="the Playground Games playlist's rounds in turn, as game type "
                              "presets: 4 Infected, 5 Cat & Mouse, 6 King (default: all three, "
                              "4,5,6)")
+    parser.add_argument("--time-trials", action="store_true",
+                        help="offer the server's Monthly Rivals time trials (forza_scores.py; "
+                             "the game's screen for them does not load yet)")
     parser.add_argument("--world-round-minutes", type=float, default=WORLD_ROUND_MINUTES,
                         help="length of a Horizon World round in minutes (default "
                              "%(default)s: endless). Only for clients with world_drop_in off, "
@@ -131,6 +134,7 @@ def configure(args):
     DATA_DIR = args.data_dir
     DUMP = args.dump_requests
     WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
+    scores.TIME_TRIALS_ENABLED = args.time_trials
     if args.playground_games:
         wanted = [p.strip() for p in args.playground_games.split(",") if p.strip()]
         by_preset = {xml.split(b'GameTypePreset="')[1].split(b'"')[0].decode(): xml

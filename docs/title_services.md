@@ -267,6 +267,17 @@ gamertag, TARGET 03:55.000 and BOUNTY 5,000 Cr; A goes to car select, the Rivals
 starts (`GetBestScores(3, 199, car, class)` first) with the target on the HUD. Retiring
 calls `WriteRaceStatsEx` (finished, place 2 of 2) and shows "FINISHED - YOU LOST".
 
+A real race (`tools/autodrive.py` drove the car along the CPU drivers' line: the 4 laps
+of Millennia Masters in the Aventador, 8th of 8): at the finish the game sent
+`SubmitScoreEx(type 3, board 199, score 115.13)`: the score is the **best lap** time
+(1:55.13), with the car (1398, class 7, PI 0.864), assists, parts and tuning. The server
+answered `uploadFiles`, and the game uploaded its ghost of that lap at once
+(`UploadFile`, 17,332 bytes: a 16-byte header `000002A0 0000410C 00000298 00000ABC`, then
+compressed data), kept as ghost 2; then `WriteRaceStatsEx` (place 8 of 8) and
+`GetRivalAndPersonalBest(199)` for the results screen's offer "NEW RIVAL vs <rival>,
+TARGET, BOUNTY 5,000Cr: Do you want to race your Rival? NO THANKS / BRING IT". The rival
+of a Rivals race is the one fetched when it started (RESTART keeps it).
+
 Race Central (at the festival; the map's X fast-travels there) has LEADERBOARDS: Festival
 Events (VIEW OVERALL and the seven wristbands' event lists), Street Races, Showcase
 Events and Online XP. VIEW OVERALL is `GetRollupRows(type 0, view, pivot -1, eventTypeId
@@ -340,9 +351,10 @@ these handlers).
 
 - The other services (storefront, car clubs, shared cars, notification contents, the
   Rivals menu's monthly time trials) get empty answers.
-- Scoreboards: a submission and ghost from a real finished race, the ghost download and a
-  race against it, the leaderboard screens (`GetRows`), `NotifyRival` were not seen yet
-  (only the rival from a submitted score, above).
+- Scoreboards: the ghost download (`DownloadFile`) and a Rivals race against a ghost,
+  beating a rival (`NotifyRival`, the bounty) and the ONLINE XP leaderboard were not seen
+  yet; the Monthly Rivals screen does not load with the server's time trials
+  (`--time-trials`).
 - Playground Games: a round of Cat & Mouse played to its end, and three or more
   consoles, were not tested.
 - `DLCMetadata.GetStringTableInfo` / `Content.DownloadContent` (DLC string tables and

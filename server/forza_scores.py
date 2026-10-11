@@ -343,6 +343,9 @@ def notify_rival(xuid, body, notify=None):
 # Categories (TimeTrial.str): 0 time, 1 time with traffic, 2 drift, 3 Top Gear, 4 time
 # spec, 5 weekly, 6 autocross.
 TIME_TRIAL_HOPPER = 10
+# Off by default (--time-trials): with these two the game's MONTHLY RIVALS screen asked for
+# nothing more and kept its YOUR RIVAL, BOUNTY and description spinners going.
+TIME_TRIALS_ENABLED = False
 TIME_TRIALS = [
     # id, category, name, description, track id, track name, laps, car class (-1 any)
     (1001, 0, "Horizon Monthly: Clear Springs", "Two laps of the Clear Springs Circuit, "
@@ -364,7 +367,8 @@ def get_time_trials(xuid, body):
     start = time.mktime((month.tm_year, month.tm_mon, 1, 0, 0, 0, 0, 0, 0))
     end = start + 32 * 86400
     cats, trials = [], []
-    for i, (tid, cat, name, desc, track, track_name, laps, cls) in enumerate(TIME_TRIALS):
+    for i, (tid, cat, name, desc, track, track_name, laps, cls) in enumerate(
+            TIME_TRIALS if TIME_TRIALS_ENABLED else []):
         if not cats or cats[-1]["category"] != cat:
             cats.append({"category": cat, "startIndex": len(trials)})
         trials.append({"id": tid, "scoreType": 3, "name": name, "description": desc,
