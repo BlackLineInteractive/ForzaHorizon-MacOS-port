@@ -489,9 +489,18 @@ class ForzaLive(asyncio.DatagramProtocol):
                 **self.challenges.status()}
 
 
-async def read_request(reader):
-    """One HTTP/1.x request: (method, path, headers, body)."""
-    head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 15)
+# How long a kept-alive connection may sit idle between requests. The game opens one
+# connection to its title server and keeps it for every later call; when we closed it
+# after 15 idle seconds the game's next call (e.g. Rivals from an event, minutes into the
+# single-player free roam) was never sent and timed out (0x80500010, "The Forza Horizon
+# server is not available") until the game found its title server again minutes later.
+KEEP_ALIVE_IDLE = 6 * 3600
+
+
+async def read_request(reader, idle=15):
+    """One HTTP/1.x request: (method, path, headers, body). Waits up to `idle` seconds
+    for the request to start."""
+    head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), idle)
     lines = head.decode("latin-1").split("\r\n")
     method, path = lines[0].split(" ")[:2]
     headers = {}
@@ -518,8 +527,10 @@ async def http_handler(server, reader, writer):
     web front ends."""
     peer = writer.get_extra_info("peername")
     try:
+        idle = 15  # the first request
         while True:
-            method, path, headers, body = await read_request(reader)
+            method, path, headers, body = await read_request(reader, idle)
+            idle = KEEP_ALIVE_IDLE
             keep = headers.get("connection", "").lower() == "keep-alive"
             conn = ("Connection: Keep-Alive" if keep else "Connection: close",)
             if path in ("/", "/status"):

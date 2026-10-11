@@ -5,7 +5,8 @@ status page. The game calls Turn 10's services with POST /Services.Horizon/o.xts
 (X-ClassName, X-Method; forza_xtsw.py has the format, docs/title_services.md the
 services). This answers the ones online play needs:
 
-    Forza.WebServices.User     Logon2 (the "Horizon server" sign-in), GetPermissionsTable,
+    Forza.WebServices.User     Logon2 (the "Horizon server" sign-in, with a permission
+                               table that allows every feature), GetPermissionsTable,
                                RetrieveOnlineCredits, WriteRaceStats(Ex) (kept per player)
     Forza.WebServices.OnlineProfile  UpdateAll (online XP and credits, kept per player:
                                the game takes its online XP from Logon2), UpdateAllTables
@@ -13,6 +14,8 @@ services). This answers the ones online play needs:
                                GetGameOptions (each round's track and game type),
                                GetSessionListFilterSettings, UserRegister, ReportQosData,
                                ReportVoting, GetRaceMultipliers
+    Forza.WebServices.Scoreboard  scores, leaderboards, Rivals and ghosts (forza_scores.py)
+    Xls.WebServices.Notifications StartNewSession, RetrieveForUser (the poll interval)
 
 Other methods get an empty answer: success and zero bytes, which read as zero, false,
 empty strings and empty lists whatever the method's results are (the game ignores bytes
@@ -28,6 +31,7 @@ import os
 import time
 import urllib.parse
 
+import forza_scores as scores
 import forza_world as world
 import forza_xtsw as x
 
@@ -120,6 +124,7 @@ def configure(args):
     DUMP = args.dump_requests
     WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
     os.makedirs(DATA_DIR, exist_ok=True)
+    scores.configure(DATA_DIR)
 
 
 def dump(method, path, headers, body):
@@ -168,6 +173,14 @@ def save_player(xuid, record):
 
 # ---- Services ----
 
+# The game asks the permission table before opening an online feature (Rivals is feature
+# 61, others 20, 21, 22, 28, 45, 66, 84, 123...: sub_8264D570 -> sub_82CE97B8 looks the
+# feature up by MethodId in the table Logon2 / GetPermissionsTable gave and returns its
+# Access as the error code). A feature missing from the table is error 4 and the game says
+# "The Forza Horizon server is not available at this time". Everything is allowed here.
+PERMISSIONS = [{"MethodId": i, "Tier": 0, "IsEnabled": True, "Access": 0} for i in range(256)]
+
+
 def user_logon2(xuid, body):
     params, _ = x.decode(x.UserLogon2_Params, body)
     login = params["loginData"]
@@ -179,7 +192,7 @@ def user_logon2(xuid, body):
     log.info("title: Logon2 %016X '%s' level %d", xuid, login["wzGamerTag"],
              login["currentCareerLevel"])
     return x.reply(x.UserLogon2_Results, {"responseData": {
-        "isProfileValid": True,
+        "isProfileValid": True, "permissions": PERMISSIONS,
         "userData": {"qwXuid": xuid, "wzGamerTag": login["wzGamerTag"],
                      "currentCareerLevel": login["currentCareerLevel"],
                      "currentBadgeId": login["currentBadgeId"],
@@ -321,9 +334,29 @@ def hopper_get_game_options(server, xuid, body):
     return x.reply(x.HopperGetGameOptions_Results, {"gameOptionsXml": xml})
 
 
+def gamertag_of(xuid):
+    return load_player(xuid).get("gamertag") or "%016X" % xuid
+
+
+# The Message Center polls for notifications (Xls Notifications.RetrieveForUser) after
+# StartNewSession, every nextRetrieveSeconds (0 made it poll 7 times a second).
+NOTIFICATION_POLL_SECONDS = 60
+
+
+def notifications_retrieve(xuid, body):
+    return x.reply(x.NotificationsRetrieveForUser_Results,
+                   {"nextRetrieveSeconds": NOTIFICATION_POLL_SECONDS})
+
+
 SERVICES = {
+    ("Xls.Notifications", "StartNewSession"):
+        lambda xuid, body: x.reply(x.NotificationsStartNewSession_Results,
+                                   {"nonce": 1, "nextRetrieveSeconds": NOTIFICATION_POLL_SECONDS}),
+    ("Xls.Notifications", "RetrieveForUser"): notifications_retrieve,
     ("User", "Logon2"): user_logon2,
-    ("User", "GetPermissionsTable"): lambda xuid, body: x.reply(x.UserGetPermissionsTable_Results),
+    ("User", "GetPermissionsTable"):
+        lambda xuid, body: x.reply(x.UserGetPermissionsTable_Results, {"permissions": PERMISSIONS[
+            :x.decode(x.UserGetPermissionsTable_Params, body)[0]["maxPermissions"]]}),
     ("User", "RetrieveOnlineCredits"):
         lambda xuid, body: x.reply(x.UserRetrieveOnlineCredits_Results, {"credit": 0}),
     ("User", "WriteRaceStats"): user_write_race_stats,
@@ -341,6 +374,7 @@ SERVICES = {
     ("Hopper", "GetRaceMultipliers"):
         lambda xuid, body: x.reply(x.HopperGetRaceMultipliers_Results,
                                    {"specialMultiplier": 1.0}),
+    **scores.services(gamertag_of),
 }
 
 
@@ -353,7 +387,11 @@ def service_call(headers, body, server=None):
         xuid = int(headers.get("x-userid", "0"), 16)
     except ValueError:
         xuid = 0
-    fn = SERVICES.get((short, method)) if cls.startswith("Forza.WebServices.") else None
+    if cls.startswith("Xls.WebServices."):
+        short = "Xls." + short
+    elif not cls.startswith("Forza.WebServices."):
+        short = None
+    fn = SERVICES.get((short, method))
     if (short, method) == ("Hopper", "GetGameOptions"):  # needs the server's world sessions
         fn = lambda xuid, body: hopper_get_game_options(server, xuid, body)  # noqa: E731
     if fn is None:

@@ -18,7 +18,14 @@ field in declaration order:
     I16, U16                     2 bytes
     I32, U32, F32                4 bytes
     I64, U64                     8 bytes
-    XNKID 8, GUID 16, SYSTIME 16 raw bytes (SYSTEMTIME: 8 big-endian u16)
+    GUID                         16 raw bytes
+    XNKID                        u32 length (always 8), then the 8 bytes (kinds 16 and 17,
+                                 not used here, are the same with 36 and 16 bytes)
+    SYSTIME                      a SYSTEMTIME as ISO 8601 text, like a WSTR:
+                                 "2026-10-11T15:25:00Z" (the game parses "%4hd-%2hd-%2hd",
+                                 "T", "%2hd:%2hd:%2hd", optional ".ms" and "Z"/"+hh:mm";
+                                 anything else, the empty string too, fails the whole
+                                 reply with 0x8050005C)
     RAW(n)                       n raw bytes (here: records of scalars kept undecoded)
     WSTR(n)                      u32 length, then that many bytes of text (n: buffer size
                                  in characters, including the terminator)
@@ -39,7 +46,15 @@ class T:
 
 _FIXED = {"U8": ">B", "BOOL": ">B", "I16": ">h", "U16": ">H", "I32": ">i", "U32": ">I",
           "F32": ">f", "I64": ">q", "U64": ">Q"}
-_RAW = {"XNKID": 8, "GUID": 16, "SYSTIME": 16}
+_RAW = {"GUID": 16}
+_SIZED = {"XNKID": 8}  # u32 length, then exactly that many bytes
+SYSTIME_DEFAULT = "2000-01-01T00:00:00Z"
+
+
+def iso_time(t=None):
+    """ISO 8601 UTC text for a Unix time (now by default): the wire form of SYSTEMTIME."""
+    import time as _time
+    return _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(t))
 
 U8, BOOL, I16, U16, I32, U32, F32, I64, U64 = (T(k) for k in
                                                 ("U8", "BOOL", "I16", "U16", "I32", "U32",
@@ -70,10 +85,12 @@ def S(*fields):
 def default(t):
     if t.kind in _FIXED:
         return 0.0 if t.kind == "F32" else 0
-    if t.kind in _RAW or t.kind in ("BYTES", "RAW"):
-        return bytes(t.n if t.kind == "RAW" else _RAW.get(t.kind, 0))
+    if t.kind in _RAW or t.kind in _SIZED or t.kind in ("BYTES", "RAW"):
+        return bytes(t.n if t.kind == "RAW" else _RAW.get(t.kind, _SIZED.get(t.kind, 0)))
     if t.kind == "WSTR":
         return ""
+    if t.kind == "SYSTIME":
+        return SYSTIME_DEFAULT
     if t.kind == "ARR":
         return []
     return {name: default(ft) for name, ft in t.sub}
@@ -88,6 +105,12 @@ def encode(t, v, out=None):
     elif k in _RAW or k == "RAW":
         n = t.n if k == "RAW" else _RAW[k]
         out += bytes(v).ljust(n, b"\0")[:n]
+    elif k in _SIZED:
+        n = _SIZED[k]
+        out += struct.pack(">I", n) + bytes(v).ljust(n, b"\0")[:n]
+    elif k == "SYSTIME":
+        b = (v if isinstance(v, str) else iso_time(v)).encode("ascii")
+        out += struct.pack(">I", len(b)) + b
     elif k == "WSTR":
         b = v.encode("utf-8")
         if t.n:
@@ -123,11 +146,17 @@ def decode(t, data, pos=0):
     if k in _RAW or k == "RAW":
         n = t.n if k == "RAW" else _RAW[k]
         return take(n), pos + n
-    if k in ("WSTR", "BYTES"):
+    if k in _SIZED:
+        (n,) = struct.unpack(">I", take(4))
+        if n != _SIZED[k]:
+            raise ValueError("%s of %d bytes" % (k, n))
+        pos += 4
+        return take(n), pos + n
+    if k in ("WSTR", "BYTES", "SYSTIME"):
         (n,) = struct.unpack(">I", take(4))
         pos += 4
         raw = take(n)
-        return (raw.decode("utf-8", "replace") if k == "WSTR" else raw), pos + n
+        return (raw if k == "BYTES" else raw.decode("utf-8", "replace")), pos + n
     if k == "ARR":
         (n,) = struct.unpack(">I", take(4))
         pos += 4
@@ -277,3 +306,93 @@ OnlineProfileUpdateAll_Params = S(
     ("photoModeSettings", ARR(RAW(37))), ("playerHistory", ARR(PlayerHistory)),
     ("playerRaceHistory", ARR(PlayerRaceHistory)), ("uiCounters", ARR(RAW(52))),
     ("showroom", ARR(RAW(10))), ("headTrackingSettings", ARR(RAW(37))), ("raceStatsId", U32))
+
+# Forza.WebServices.Scoreboard: leaderboards, Rivals and their ghosts.
+_SuspTire = S(*[(n, F32) for n in (
+    "m_Pressure", "m_Camber", "m_Toe", "m_Caster", "m_Springs", "m_Swaybar", "m_RideHeight",
+    "m_DampBump", "m_DampRebound", "m_LSDTorqueAccel", "m_LSDTorqueDecel")])
+CarTuning = S(("base", S(
+    *[(n, F32) for n in ("m_FrontDownforce", "m_RearDownforce", "m_FinalDriveRatio",
+                         "m_BrakePressure", "m_BrakeBias", "m_HandbrakePressure",
+                         "m_CenterDiffTorqueSplit", "m_STMScale", "m_TCSTakeOffSlipDef",
+                         "m_TCSMovingSlipDef", "m_SteerSpeed", "m_SteerAmount")],
+    ("m_FrontSuspTire", _SuspTire), ("m_RearSuspTire", _SuspTire),
+    *[(n, F32) for n in ("m_FuelLoad", "m_ArcadeTyreGrip", "m_ArcadeTyreGripLateralOnly",
+                         "m_ArcadeTyreGripFrontLateralOnly")])),
+    ("m_GearRatios", ARR(F32, 9)))
+ScoreSubmission = S(
+    ("gameScoreboardId", I32), ("isServerTimeTrial", BOOL), ("score", F32), ("carId", U16),
+    ("garageId", I32), ("carDriveTypeId", U8), ("carPower", F32), ("carTorque", F32),
+    ("carWeight", F32), ("carClassId", U8), ("carPerformanceIndex", F32),
+    *[(n, BOOL) for n in ("usedSTM", "usedABS", "usedTCS", "usedAutoBrake", "usedAutoShifting",
+                          "usedClutch", "usedDrafting", "usedMulligan", "usedFullSuggestedLine",
+                          "usedBrakingSuggestedLine")],
+    ("installedParts", S(("base", S(("m_TireBrand", I32), ("m_WheelStyle", I32))),
+                         ("m_CarParts", ARR(I32, 43)))),
+    ("tuning", CarTuning))
+ScoreboardSubmitScore_Params = S(("type", I32), ("data", ScoreSubmission))
+ScoreboardSubmitScoreEx_Params = S(("type", I32), ("data", S(("base", ScoreSubmission),
+                                                              ("numCarsPassed", I32))))
+ScoreboardSubmitScore_Results = S(("scoreId", GUID), ("uploadFiles", BOOL))
+ScoreboardUploadFile_Params = S(("scoreId", GUID), ("data", BYTES()))
+ScoreboardDownloadFile_Params = S(("id", I32), ("maxSize", I32))
+ScoreboardDownloadFile_Results = S(("data", BYTES()))
+ClanData = S(("clanId", I32), ("clanTag", WSTR(5)), ("clanName", WSTR(21)))
+ScoreboardRow = S(
+    ("position", I32), ("rank", I32), ("user", UserData), ("score", F32),
+    ("submittedTime", SYSTIME), ("carId", U16), ("carClassId", U8),
+    ("carPerformanceIndex", F32),
+    *[(n, BOOL) for n in ("usedSTM", "usedTCS", "usedABS", "usedAutoBrake", "usedAutoShifting",
+                          "usedClutch")],
+    ("ghostFileId", I32), ("clanData", ClanData), ("bounty", I32))
+ScoreboardGetRows_Params = S(("type", I32), ("view", I32), ("gameScoreboardId", I32),
+                             ("isServerTimeTrial", BOOL), ("isClubBoard", BOOL),
+                             ("startAt", I32), ("maxResults", I32))
+ScoreboardGetRows_Results = S(("rows", ARR(ScoreboardRow)), ("userRow", ScoreboardRow),
+                              ("available", I32), ("totalRowCount", I32))
+ScoreboardGetRollupRows_Params = S(("type", I32), ("view", I32), ("pivotId", I32),
+                                   ("eventTypeId", I32), ("isClubBoard", BOOL),
+                                   ("startAt", I32), ("maxResults", I32))
+ScoreboardGetRollupRows_Results = S(("rows", ARR(ScoreboardRow)), ("userRow", ScoreboardRow),
+                                    ("available", I32))
+ScoreboardGetStorefrontRows_Params = S(("type", I32), ("view", I32), ("startAt", I32),
+                                       ("maxResults", I32))
+ScoreboardGetStorefrontRows_Results = ScoreboardGetRollupRows_Results
+ScoreboardGetRival_Params = S(("gameScoreboardId", I32), ("isServerTimeTrial", BOOL),
+                              ("rivalXuid", U64))
+Rival = S(("scoreData", ScoreboardRow), ("bounty", I32))
+ScoreboardGetRival_Results = S(("rival", Rival))
+ScoreboardGetRivalAndPersonalBest_Results = S(("rival", Rival),
+                                              ("personalBest", S(("score", F32))))
+ScoreboardGetBestScores_Params = S(("scoreType", I32), ("gameScoreboardId", I32),
+                                   ("isServerTimeTrial", BOOL), ("carId", U16),
+                                   ("carClassId", U8), ("carDriveTypeId", U8))
+ScoreboardGetBestScores_Results = S(("bestScore", S(("score", F32))))
+ScoreboardNotifyRival_Params = S(("gameScoreboardId", I32), ("isServerTimeTrial", BOOL),
+                                 ("rivalXuid", U64), ("type", I32), ("myScoreId", GUID))
+ScoreboardGetTimeTrials_Params = S(("maxTimeTrialCategories", U32), ("maxTimeTrialResults", U32))
+TimeTrial = S(("id", U16), ("scoreType", I32), ("name", WSTR(129)), ("description", WSTR(513)),
+              ("notRegisteredMessage", WSTR(257)), ("trackId", U16), ("trackName", WSTR(65)),
+              ("hopperId", I32), ("gameOptionsIndex", I32), ("startDate", SYSTIME),
+              ("endDate", SYSTIME), ("userRegistered", BOOL), ("featured", BOOL),
+              ("active", BOOL), ("displayCarClass", I32))
+ScoreboardGetTimeTrials_Results = S(
+    ("timeTrialCategories", ARR(S(("category", I32), ("startIndex", I32)))),
+    ("timeTrials", ARR(TimeTrial)))
+
+# Xls.WebServices.Notifications: the Message Center.
+NotificationsStartNewSession_Results = S(("nonce", U16), ("nextRetrieveSeconds", I32))
+NotificationsRetrieveForUser_Params = S(("nonce", U16), ("maxResults", I32),
+                                        ("cbParameterBlockSize", I32))
+Notification = S(("id", I64), ("xuidRecipient", U64), ("notificationType", I16),
+                 ("hasThumbnail", BOOL), ("isRead", BOOL), ("deleteAction", I32),
+                 ("expirationDate", I64), ("cbParameters", I16))
+NotificationsRetrieveForUser_Results = S(("results", ARR(Notification)),
+                                         ("parameterBlock", BYTES()),
+                                         ("nextRetrieveSeconds", I32))
+NotificationsId_Params = S(("notificationId", I64))  # Clear, MarkRead
+NotificationsGetCategories_Params = S(("maxResults", I32))
+NotificationsGetCategories_Results = S(("results", ARR(S(
+    ("type", I32), ("name", WSTR(64)), ("description", WSTR(256)),
+    ("backgroundImageFileId", I32)))))
+

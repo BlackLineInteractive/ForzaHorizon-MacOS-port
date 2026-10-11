@@ -83,11 +83,11 @@ declaration order):
 | 8 | WCHAR string (fixed buffer) | u32 length + that many bytes (UTF-8; `DriverA` is 7) |
 | 9 | struct | its fields |
 | 10 | array (inline, or a pointer with count/capacity fields for results) | u32 count + elements |
-| 11 | SYSTEMTIME | 16 bytes |
+| 11 | SYSTEMTIME | ISO 8601 text like a string: u32 length + `2026-10-11T15:25:00Z` (the reader, `sub_82A954D8`, parses `%4hd-%2hd-%2hd`, `T`, `%2hd:%2hd:%2hd`, an optional `.ms` and `Z` or `+hh:mm`; anything else, the empty string too, fails the whole reply with `0x8050005C`) |
 | 12 | bool | 1 byte |
 | 13 | GUID | 16 bytes |
 | 15 | byte array | u32 length + bytes |
-| 18 | XNKID | 8 bytes |
+| 16, 17, 18 | XNKID (18) and two other fixed blobs | u32 length (must be 36, 16, 8), then the bytes |
 
 Flags: 0 = a parameter passed by value, 3 = by pointer; 1 = a result, 5 = a result in a
 caller buffer (an array whose capacity comes from a `max...` parameter). A method's
@@ -108,17 +108,33 @@ Notifications, Transaction}`. What the game calls, in order:
 
 | When | Call | Our answer |
 | --- | --- | --- |
-| Sign-in (about 50 s after boot) | `User.Logon2(loginData)` | `responseData`: profile valid, no permission limits, `userData` (XUID, gamertag, **currentXPTotal = the player's online XP**), timeouts |
+| Sign-in (about 50 s after boot) | `User.Logon2(loginData)` | `responseData`: profile valid, a permission table allowing every feature (below), `userData` (XUID, gamertag, **currentXPTotal = the player's online XP**), timeouts |
 | | `OnlineProfile.UpdateAllTables`, `UpdateAll` | success; `UpdateAll`'s `playerRaceHistory` (level, XP, **onlineXP**, online races and wins) and `playerHistory` (credits) are kept per player |
 | | `DLCMetadata.GetStringTableInfo("EN")`, `Xls Content.DownloadContent(0, 0, 0x40000)` x2 | empty |
 | Party lobby | `Hopper.GetList(maxCategoryResults 2, maxHopperResults 32)` | the playlists (below) |
 | Find Game, picking a playlist | `Hopper.GetSearchSettings(hopperId)`, `GetGameOptions(hopperId, roundNum, 0x8000)`, then (after the session search) `UserRegister(hopperId, sessionId)` every `nextRegisterSeconds` | search settings, the round's GameOptions XML, 60 s |
 | Race start | `GameplayLog.Write`, `Hopper.GetRaceMultipliers` | empty, multiplier 1.0 |
-| Race end | `Scoreboard.SubmitScoreEx` / `SubmitScore`, `User.SetPlayercardInfo`, `OnlineProfile.UpdateAllTables` / `UpdateAll` | empty / success (profile kept) |
+| Race end | `Scoreboard.SubmitScoreEx` / `SubmitScore`, `User.SetPlayercardInfo`, `OnlineProfile.UpdateAllTables` / `UpdateAll` | the score kept (scoreboards below) / success (profile kept) |
+| End of a Rivals race (also retiring) | `User.WriteRaceStatsEx(id, raceStats, scoreData)` | kept per player (`userXP`, credits, the race) |
+| Message Center (online free roam, after races) | `Xls Notifications.StartNewSession`, then `RetrieveForUser` every `nextRetrieveSeconds` | nonce 1, 60 s (with 0 the game polled 7 times a second) |
 | Sometimes | `Xls User.SetFriends` | empty |
 
-`User.WriteRaceStats(Ex)` (race stats with `userXP`, credits) is implemented on the
-server and keeps the stats, but was not called in these tests.
+The game keeps one HTTP connection to the title server for all its calls. The server must
+leave it open while idle: when it closed idle connections after 15 s, the game's next call
+minutes later (Rivals from the single-player free roam) was never sent and failed as
+"The Forza Horizon server is not available", until the game found its title server again
+(about 12 minutes later in one test). `forza_live_server.py` now waits 6 hours.
+
+### Permissions (features)
+
+Before an online feature the game looks it up in the permission table that `Logon2`
+(and `GetPermissionsTable`) returned: `sub_8264D570(feature)` -> `sub_82CE97B8` ->
+`sub_82AAEE98` finds the entry whose `MethodId` is the feature id (Rivals is 61; others
+used: 20, 21, 22, 28, 45, 66, 84, 123) and returns its `Access` as the error code (0 =
+allowed). A feature missing from the table is error 4: the popup "FEATURE UNAVAILABLE.
+The Forza Horizon server is not available at this time" without any request reaching the
+server. The table is up to 256 entries `{MethodId, Tier, IsEnabled, Access}`; the server
+sends ids 0-255, all enabled with `Access` 0.
 
 ### Playlists (hoppers)
 
@@ -187,10 +203,53 @@ credits kept), so the server keeps it: from each `UpdateAll` (`onlineXP`, only g
 into `DATA_DIR/players/<XUID>.json`, back in the next `Logon2`. Without the title server
 the game offers only the default "Quick Match" playlist, which awards no multiplayer XP.
 
+### Scoreboards, leaderboards and Rivals (`server/forza_scores.py`)
+
+The method stubs (`Forza.WebServices.Scoreboard`, all calling `sub_82A92018`) and their
+callers:
+
+| Method | Stub | Called from |
+| --- | --- | --- |
+| `SubmitScore(type, data)` / `SubmitScoreEx(type 3, {data, numCarsPassed})` | `82AB9570` / `82AB95E0` | the scoreboard manager `0x82897xxx` (race end), `0x828DF464` |
+| `UploadFile(scoreId, data)` | `82AB9650` | `0x82897918`, after a submission answered `uploadFiles` |
+| `DownloadFile(id, maxSize 256000)` | `82AB90D0` | `0x82897A1C` (a rival's ghost, by `ghostFileId`) |
+| `GetBestScores(scoreType, board, isServerTimeTrial, car, class, drive type)` | `82AB9140` | `0x828976FC`; seen at the start of a Rivals race |
+| `GetRivalAndPersonalBest(board, isServerTimeTrial, rivalXuid)` | `82AB9228` | `sub_8290CD58` ("RivalData: Rival Net Task"): X RIVALS on an event's ticket |
+| `GetRival(board, isServerTimeTrial, rivalXuid)` | `82AB91B8` | `sub_827D09F0` |
+| `GetRows(type, view, board, isServerTimeTrial, isClubBoard, startAt, maxResults)` | `82AB9330` | the leaderboard screen's fetch `sub_82826E88` (50 rows from `startAt`), `0x828C7F1C` (view 5, 200 rows) |
+| `GetRollupRows(type, view, pivotId, eventTypeId, isClubBoard, startAt, max)` | `82AB9298` | `sub_82826E88` |
+| `GetStorefrontRows`, `GetTimeTrials(7, 150)`, `NotifyRival` | `82AB93D0`, `82AB9460`, `82AB94E0` | `sub_82826E88`; the Rivals menu `0x827AD614`; `0x82897E38`, `0x828DE9F4` |
+
+A row is `{position, rank, user (UserData), score, submittedTime, carId, carClassId,
+carPerformanceIndex, 6 assist flags, ghostFileId (-1 none), clanData, bounty}`.
+
+The server keeps each player's best score per scoreboard (`gameScoreboardId` and
+`isServerTimeTrial`; online races submit board -1, not kept) in
+`DATA_DIR/scoreboards.json`. Lower is better except for score types in
+`BIGGER_IS_BETTER` (4, seen with XP-like values after an online race). A new best is
+answered with a fresh `scoreId` and `uploadFiles` true; the ghost the game then uploads
+is kept as it is in `DATA_DIR/ghosts/<id>.bin` (the row's `ghostFileId`) and served by
+`DownloadFile`. Views: 0 the top from `startAt`, 1 around the caller, others (friends are
+everyone here) like 0; `userRow` is the caller's row (position 0 when they have none).
+Rollups rank players by the boards they lead. The rival is the one asked for, or (rival
+0) the score just better than the caller's (without a score of their own, the slowest
+other player); the bounty is 1000 (the game showed 5,000 Cr).
+
+Seen in the game (single player, a copy of a career save, event "GoPro Millennia
+Masters", board 199): X RIVALS on the event's ticket calls `GetRivalAndPersonalBest(199)`.
+With no rival the game says "There was an error communicating with the Turn 10 server";
+with a rival (another player's submitted score, 235 s) it shows YOUR RIVAL, the rival's
+gamertag, TARGET 03:55.000 and BOUNTY 5,000 Cr; A goes to car select, the Rivals race
+starts (`GetBestScores(3, 199, car, class)` first) with the target on the HUD. Retiring
+calls `WriteRaceStatsEx` (finished, place 2 of 2) and shows "FINISHED - YOU LOST".
+
 ## Not done
 
-- The other services (storefront, auctions, gifting, scoreboards, car clubs, shared cars,
-  notifications) get empty answers: their screens show nothing.
+- The other services (storefront, auctions, gifting, car clubs, shared cars, notification
+  contents) get empty answers: their screens show nothing.
+- Scoreboards: a submission and ghost from a real finished race, the ghost download and a
+  race against it, the leaderboard screens (`GetRows`), `NotifyRival` were not seen yet
+  (only the rival from a submitted score, above).
 - The Playground category's playlist is answered but its game (preset 7) was not tested;
   car class voting between rounds was seen, not exercised.
 - `DLCMetadata.GetStringTableInfo` / `Content.DownloadContent` (DLC string tables and
