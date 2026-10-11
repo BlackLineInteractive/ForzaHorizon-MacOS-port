@@ -359,9 +359,22 @@ FileDepot_AuctionOutbid/Won/Sold/Failed `sub_82834DF8`/`82835048`/`82835298`/`82
 OutOfStock `sub_82835768`, MoneyReceived `sub_82835940`, GiftMoney `sub_82835B70`,
 GiftItem `sub_82835DA8`, GiftCar and DeliveryFailed `sub_828362D8`, the Car Club ones
 (`sub_82836760`-`sub_82838138`), RivalsAlerts_Challenge and SpeedCamera_Challenge
-`sub_828386A0`, RivalsAlerts_Recommendation `sub_82838F48`. The server answers no
-notifications yet (the type numbers and parameter layouts are still to be read from
-these handlers).
+`sub_828386A0`, RivalsAlerts_Recommendation `sub_82838F48`. The visitor (vtable
+`0x82071A24`) has one creator per kind; by slot (offset/4): 5, 7, 8, 11, 22 a generic
+message, 6 NewDlc, 9 Banned, 12 AuctionOutbid, 13 AuctionSold, 14 AuctionWon, 15
+AuctionFailed, 16 GiftMoney, 17 GiftItem, 18 GiftCar, 19 OutOfStock, 20 MoneyReceived, 23
+RivalsRecommendation, 24 RivalsChallenge/SpeedCamera, 25 ClubRequest, 26 ClubInvite, 27
+KickRecommendation, 28 KickNotification, 29 ClubDemotion, 30 MembershipAccepted, 31
+QuitNotification, 32 NewMember, 33 ClubPromotion, 34 shared car. How a
+`notificationType` picks the slot is not found yet.
+
+In single player the game starts a session (`StartNewSession`) when a race loads and then
+polls every `nextRetrieveSeconds`. A test (`--test-notifications 1,...,36`: one
+notification of each type 1-36, no parameters, expiring in 2100) reached the game (the
+reply's records were in its memory) but the Message Center still said NO MESSAGES:
+probably they need parameters, or categories in Logon2's `notificationCategories`
+(`{type, name, description, backgroundImageFileId}`, up to 5), which the server leaves
+empty. The server sends no notifications by default.
 
 ## Not done
 

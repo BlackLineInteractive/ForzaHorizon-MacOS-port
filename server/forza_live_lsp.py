@@ -119,6 +119,9 @@ def add_arguments(parser):
                         help="the Playground Games playlist's rounds in turn, as game type "
                              "presets: 4 Infected, 5 Cat & Mouse, 6 King (default: all three, "
                              "4,5,6)")
+    parser.add_argument("--test-notifications", default="",
+                        help="answer RetrieveForUser with one empty notification of each of "
+                             "these types (comma separated), to map them in the Message Center")
     parser.add_argument("--time-trials", action="store_true",
                         help="offer the server's Monthly Rivals time trials (forza_scores.py; "
                              "the game's screen for them does not load yet)")
@@ -135,6 +138,7 @@ def configure(args):
     DUMP = args.dump_requests
     WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
     scores.TIME_TRIALS_ENABLED = args.time_trials
+    TEST_NOTIFICATION_TYPES[:] = [int(t) for t in args.test_notifications.split(",") if t]
     if args.playground_games:
         wanted = [p.strip() for p in args.playground_games.split(",") if p.strip()]
         by_preset = {xml.split(b'GameTypePreset="')[1].split(b'"')[0].decode(): xml
@@ -408,9 +412,22 @@ def gamertag_of(xuid):
 NOTIFICATION_POLL_SECONDS = 60
 
 
+TEST_NOTIFICATION_TYPES = []  # --test-notifications: one empty notification of each
+# An expiration date far ahead whether the game reads it as a FILETIME or Unix time: 2100
+# as a FILETIME (100 ns since 1601).
+FAR_FUTURE = (2100 - 1601) * 31556952 * 10 ** 7
+
+
 def notifications_retrieve(xuid, body):
+    p, _ = x.decode(x.NotificationsRetrieveForUser_Params, body)
+    results = [{"id": 1000 + t, "xuidRecipient": xuid, "notificationType": t,
+                "expirationDate": FAR_FUTURE, "cbParameters": 0}
+               for t in TEST_NOTIFICATION_TYPES]
+    if results:
+        log.info("title: notifications for %016X: test types %s", xuid, TEST_NOTIFICATION_TYPES)
     return x.reply(x.NotificationsRetrieveForUser_Results,
-                   {"nextRetrieveSeconds": NOTIFICATION_POLL_SECONDS})
+                   {"results": results[:p["maxResults"]],
+                    "nextRetrieveSeconds": NOTIFICATION_POLL_SECONDS})
 
 
 SERVICES = {
