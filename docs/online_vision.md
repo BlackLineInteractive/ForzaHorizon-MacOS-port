@@ -202,55 +202,141 @@ Drop-in (`world_drop_in.cpp`, server rounds endless):
 10. END FREE ROAM (host B): both went to the lobby and loaded into the next round together
    after the intermission. A 60 s timed round did not end the free roam (2+ minutes).
 
+## Phase 2 (in progress): events from the world, a 30 s wait lobby, CPU drivers
+
+**How to play (operator):** run the server with the game's database (default
+`extracted/game/media/db/gamedb.slt`) and either `--world-event-minutes N` (every world
+gets an event after N minutes of free roam) or ask for one: `curl
+'http://SERVER:HTTP_PORT/world/event?session=all'` (or `session=<id>` from the status page's
+`worlds`, `&event=<Events.Id>` for a given event). The players in that world are taken to
+the event's lobby, wait 30 s, race the event with CPU drivers filling the grid, and go
+back to the free roam after it.
+
+Code: `server/forza_world.py` (events, world state, the AI rule), `forza_live_server.py`
+(`WORLD_EVENT` message, `/world/event`, the `worlds` of the status page),
+`forza_live_lsp.py` (`GetGameOptions` answers the event), `src/hooks/world_events.cpp`
+(the client side), `net.cpp` (message 18).
+
+### How a round's options reach the game (traced)
+
+- The session host asks `Hopper.GetGameOptions` for the **next** round when a round
+  starts: `sub_82875840` (round start, every peer) -> `sub_8286E660` -> host only
+  `sub_8286A800(game, 0)`: round counter `+0x7DC` + 1, hopper `+0x758`, the requester
+  object `+0x870` (vtable `0x820763B8`, `sub_82869690` sends it; `roundNum` = counter +
+  `+0x7DE`, or random with `+0x7F0`). The answer lands in the online game's next-round
+  options (`+0x488`, 0x2D0 bytes, flag `+0x484`) and becomes the round's options
+  (`+0x1B4`, via `sub_8287E538` from `sub_8287F5D0`) when the players are back in the
+  lobby. So the lobby after a round already shows the next one, and the first round of a
+  playlist is the one asked for when it was picked (`sub_8287F2B8`).
+- Vote to skip (`sub_82896178`) asks again with `sub_8286A800(game, 1)`; the event path
+  uses the same call.
+- Game options fields (`sub_8260A4D8` serializes them, offsets from the options):
+  `GameTypePreset` +0, `TrackId` +4, `MaxPlayers` +0x18, `MaxAIPlayers` +0x19,
+  `AIFieldId` +0x1C, `AIDifficulty` +0x296 (Easy 0, Medium 1, Hard 2, Pro 3: the rows of
+  `MPAIDifficultyMap`), `TimePlayerAFKUntilKick` +0x2C0. In the online game add 0x1B4
+  (preset `+0x1B4`, max players `+0x1CC`, max AI `+0x1CD`, AI difficulty `+0x44A`).
+
+### CPU drivers in an online lobby (step 1 of the plan)
+
+- The game has them. The host keeps `min(MaxPlayers - humans, MaxAIPlayers)` CPU players
+  in the online lobby (`sub_8287BBE0`, run when options are applied, `sub_8287BDC0`, and
+  when a player's status changes): each is a player of the player manager
+  (`sub_82577AD8`, singleton `0x832E681C`) with the CPU flag (status record +7 = 1,
+  `sub_82881E30`), a name from `AIPlayers` ("(CPU) Ben Andrews") and a car of the bucket's
+  class (`sub_82877240`); `sub_82877470` gives each the round's `AIDifficulty`
+  (`sub_82568BD8`). Every peer lists them in the lobby with their cars (seen with
+  `MaxAIPlayers="6"`: 2 humans and 6 CPU drivers in both lobbies). Turn 10's XML always
+  says `MaxAIPlayers="0"`; `IDS_SS_OptionNumAIPlayers` hints at a custom-game option.
+- The CPU players count for the launch: a host alone with CPU drivers is "enough players"
+  and launches (no solo-start hook needed for an event).
+- **Into the race** they need one fix. At the round start (`sub_82875840`) the host sets
+  every player local to it to "loading" (status 3), its CPU drivers included, but only
+  its own player is set "in game" (4) when it has loaded (`CSetPlayerToInGame`,
+  `sub_82942208`). The race waits up to 45 s for every player to be in game
+  (`CWaitForAllPlayersToHaveLoadedToInGame`, `sub_828784C0`), then kicks the others
+  (`CKickFailedLoadPlayers`, `sub_82878630` -> `sub_82876378`), and kicking a CPU driver,
+  a player local to the host, throws the host itself out ("voted out", reason 3) or, when
+  several such removals were queued, crashed it (see "Fixed on the way"). With the CPU
+  drivers set in game together with the host's player (hook on `sub_8286A468`), they
+  race: solo test, event 4 (track 324, 1 lap, class B), 7 CPU drivers on the grid, the
+  host started 5th of 8 ("(CPU) Chris Ashton 1, (CPU) Alan Brewer 4, DriverA 5, (CPU) Joe
+  Andershak 6"), CPU cars with their name tags ahead, AI passing and finishing, "RACE ENDS
+  IN 0:19" after the first finisher, the results and rewards screens, then the lobby and
+  the world's free roam again (`screenshots/2026-10-11_events_01_cpu_drivers_race.jpg`).
+  After the race the same applies to "ready to return to the lobby" (status 5): the
+  host waited about 50 s on "WAITING FOR OTHER PLAYERS..." for its CPU drivers; they now
+  follow the host's player into 5 too.
+
+### The flow (built)
+
+1. **Request.** The server marks a world (its session id) "event pending" and sends
+   `WORLD_EVENT` (UDP message 18: op 1, event id u32, session id) to the world's host
+   every 2 s (its published session, or the standby host after a migration); a request
+   not taken in 2 minutes is dropped.
+2. **The host takes it** (`world_events.cpp`, hook on `sub_825ADB30`, the update of
+   `CIsFreeRoamSessionOver` which every peer runs each frame of the free roam): it asks
+   for the next round again (`sub_8286A800(game, 1)`); the server answers that
+   `GetGameOptions` with the event (state "next"); once the next-round options are the
+   event (`+0x484` set, `+0x488` preset not 7; or after 15 s) the host ends the free roam
+   the way END FREE ROAM does: its own player's status becomes 5 (`sub_8286A468`; status
+   5 is what `CSetPlayerReadyToReturnToLobby` with the host flag sets, `sub_82942198`).
+   `CIsFreeRoamSessionOver` on every peer reads the host's status 5 (`sub_825ADB30`:
+   `sub_828752B8` = the host's player) and everyone returns to the lobby.
+3. **The wait lobby.** In the lobby the event is the round. While an event round of the
+   world playlist is in the lobby, the intermission (`+0x7E4`/`+0x7E8`, copied from the
+   playlist's search settings, 5000 ms for the world) is `world_event_wait_seconds` (30)
+   on every peer (hook on the lobby update `sub_8287F670`), and the world's 5 s come
+   back for the next free-roam round. The host starts the countdown once the lobby is
+   ready (the CPU drivers make it ready at once); `INTERMISSION 30` counts down in every
+   lobby. Players pick a car with SELECT CAR under the bucket's restriction: a car that
+   doesn't qualify is swapped by the game for one that does (both test players' S-class
+   cars became a B-class Nissan GT-R R34 for a class 4 event). A grid full of humans
+   (humans >= `MaxPlayers`) starts at once: the hook sets the launch time (`+0x4C`) to 1,
+   which the lobby update takes as passed (not tested: needs 8 players).
+4. **The race**, then the lobby: the event round's own start asks for the next round,
+   which the server answers with the world (the event is consumed); after the race the
+   lobby launches the world round (5 s) and the free roam goes on.
+
+### The events
+
+From the game's database (`server/forza_world.py`): `Events` with `CareerTypeId` 1 or 2
+(the festival road races; 4 are street races, 7/8/11/12 the showcases and specials),
+`IsDLC = 0`, joined with their first `Races` row (track, laps) on a track with
+`VisibleInMP = 1` and `RibbonConfiguration` 0 (circuit, `GameTypePreset` 1) or 2 (point to
+point, preset 2): 70 events. The bucket's `CarRestrictions CarClassId` is the event's
+`TargetClass` (a `CarClasses` id: 2 D, 3 C, 4 B, 5 A, 6 S, 7-9 R3-R1). Not decoded yet:
+`EventRestrictions.Value` (hex: a 32-bit field mask, a byte, then the values; e.g. mask
+`0x00030000` with `000007BC 000007C5` = years 1980-1989), which carries the make/year/
+drive restrictions the career events show. `--world-events 4,26` limits the pick,
+`--world-event-laps N` overrides the laps (tests), `--world-event-ai N` sets
+`MaxAIPlayers` (default 7: CPU drivers fill the 8 places at any human count).
+
+### AI difficulty from the human share
+
+`AIDifficulty` follows the human share of the 8-car grid: at most 1/3 humans Easy, 2/3 or
+more Hard, between them Medium (1-2 humans Easy, 3-5 Medium, 6-8 Hard). The server puts
+it in the event's XML from the world's player count when the event is asked for; the
+host's client sets `+0x44A` again from the lobby's human count before every
+`sub_82877470` (each AI fill: whenever a player joins or leaves), so the level at the
+launch is the one of the final grid.
+
+### Fixed on the way
+
+- **Kicked while racing crashed the host** (null read in `sub_82CF6288`). A local player
+  removed from the online game (`sub_8286FC98`, reason 3 "voted out" or 7 "kicked for
+  inactivity") ends it (`sub_8288B840` -> `sub_8287DA10`), whose session teardown
+  (`sub_82CF7278`) pumps the session's queued messages (`sub_82CEC5A8`); a second
+  removal message in the queue ended the game again inside it, tore the session down
+  (`+0x684` = 0) and the outer teardown then read it. Nested removals are dropped
+  (`world_events.cpp`). Seen with an idle host 50 s into a race with CPU drivers.
+- **CPU drivers kicked = the host kicked.** `sub_82876378` (kick) on a player whose status
+  record says local shows "voted out" and ends the online game: a CPU driver is the
+  host's own player, so kicking one (the race's `CKickFailedLoadPlayers` after 45 s of
+  `CWaitForAllPlayersToHaveLoadedToInGame`, which wants every player at status 4) threw
+  the host out of its own session. CPU drivers are never kicked now, and they are set in
+  game (4) when the host's player is (hook on `sub_8286A468`).
+
 ## Next phases (designs)
-
-### Phase 2: events from the world, a 30 s wait lobby, AI fill
-
-What phase 1 showed: the world is a playlist whose rounds the server serves. The
-**session host** asks for each round's options when it launches (`Hopper.GetGameOptions
-(hopperId, roundNum)`, seen from the host only, and from the new host after a migration),
-and the round's GameOptions XML carries everything an event needs: `GameTypePreset`
-(1 circuit, 2 point to point), `TrackId`, the bucket's `CarRestrictions`, `MaxAIPlayers`,
-`AIDifficulty`, laps. Since drop-in, a world round is an endless online free roam (race
-type 18): it ends only through the host's END FREE ROAM, which brings everyone back to the
-lobby, and the lobby launches the next round after the intermission. The drop-in hooks
-apply to free-roam rounds (preset 7) only, so a race round served on the world's playlist
-runs as Find Game's race (type 6): late players wait in the lobby for it to end instead of
-dropping into a running race, which is what a race wants.
-
-- **Event flow:** an event is a round. The world's rotation becomes world round, event,
-  world round, ...; the event is picked from the game database (`Events` with its
-  `EventRestrictions` -> the bucket's `CarRestrictions`, the event's track and laps). Every
-  player picks a car from their own garage in the lobby (the lobby already has SELECT CAR
-  and LOAD CAR SETUP, filtered by the bucket's restrictions), so "join with your own cars
-  under the event's conditions" is the lobby as it is. Everyone in the world session goes
-  to the event (one session of up to 8); a player who wants none quits and picks Horizon
-  World again, which places it into another world or opens one.
-- **Starting an event from the world:** a non-host cannot start anything in online free
-  roam (the host starts co-op challenges from the pause menu), and timed rounds no longer
-  end the world. The way out is the host's END FREE ROAM: a client hook on the world's
-  host that takes that path when the server asks (an event requested by a player: a
-  festival event marker reached in the world, or a pause-menu entry, sent to the server),
-  then the server answers the next `GetGameOptions` with the event. The END FREE ROAM
-  action is still to trace (pause menu item, then its confirm; the free roam's
-  `CUnloadToPreGame destination="race_lobby"`).
-- **30 s wait lobby:** the event round's intermission. The intermission comes from the
-  playlist's search settings, which the game copies when the playlist is picked (`+2020`,
-  `+2024` of the online game: 5000 ms for the world, which its solo start should keep), so
-  a 30 s event wait needs those two set to 30000 before the event round launches (a client
-  hook, or a separate event playlist). The lobby shows INTERMISSION with a countdown;
-  players who join the session during it are on the grid. A grid full of humans starting
-  early would need `minPlayersToLaunch` = max players plus a check on the intermission's
-  end; not seen yet. After the event, END of the race brings everyone back to the lobby
-  and the server serves the world (free roam) again.
-- **AI fill:** the host asks for the round's options at launch, after the intermission, so
-  the human count is final then: the server reads the host's published session (filled
-  public slots), sets `MaxAIPlayers` = 8 - humans and `AIDifficulty` from the human share:
-  at most 1/3 humans Easy, about 1/2 Medium, 2/3 or more Hard (8-car grid: 1-2 humans
-  easy, 3-5 medium, 6-8 hard). The game maps `AIDifficulty` through `MPAIDifficultyMap`
-  (`AISkill`, `AITemperament`). To verify first: that a playlist round with `MaxAIPlayers`
-  > 0 spawns AI cars online (the field is read by `sub_8260A4D8`; Turn 10's own XML sets
-  `MaxAIPlayers="0"`), and that the host simulates them for everyone.
 
 ### Phase 3: head-to-head challenges
 

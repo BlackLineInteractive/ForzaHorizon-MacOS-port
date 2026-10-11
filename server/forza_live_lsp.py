@@ -28,6 +28,7 @@ import os
 import time
 import urllib.parse
 
+import forza_world as world
 import forza_xtsw as x
 
 log = logging.getLogger("forza-live")
@@ -284,14 +285,22 @@ GAME_OPTIONS_XML = """<GameOptions GameTypePreset="{preset}"{filter} TrackId="{t
 """
 
 
-def hopper_get_game_options(xuid, body):
+def hopper_get_game_options(server, xuid, body):
     """A round's options as GameOptions XML (the format of the game's
     media/gametunablesettings Default*HopperOptions.xml). DATA_DIR/hoppers/<hopperId>.xml
-    overrides the built-in rotation (HOPPER_ROUNDS, picked by roundNum)."""
+    overrides the built-in rotation (HOPPER_ROUNDS, picked by roundNum). In the Horizon
+    World the session host asks for the next round when a round starts, and again when the
+    server asked it to run an event (forza_world.py)."""
     params, _ = x.decode(x.HopperGetGameOptions_Params, body)
     hopper, round_num = params["hopperId"], params["roundNum"]
     path = os.path.join(DATA_DIR, "hoppers", "%d.xml" % hopper)
-    if os.path.isfile(path):
+    found = server.world_of(xuid) if hopper == WORLD_HOPPER and server else None
+    event_xml = world.WORLDS.next_round(*found) if found else None
+    if event_xml:
+        xml = event_xml
+        log.info("title: hopper %d round %d for %016X: world %s event", hopper, round_num, xuid,
+                 found[0].hex())
+    elif os.path.isfile(path):
         with open(path, "rb") as f:
             xml = f.read()
     else:
@@ -327,7 +336,6 @@ SERVICES = {
         lambda xuid, body: x.reply(x.HopperGetSessionListFilterSettings_Results,
                                    {"settings": SESSION_FILTER}),
     ("Hopper", "UserRegister"): hopper_user_register,
-    ("Hopper", "GetGameOptions"): hopper_get_game_options,
     ("Hopper", "ReportQosData"): lambda xuid, body: x.reply(),
     ("Hopper", "ReportVoting"): lambda xuid, body: x.reply(),
     ("Hopper", "GetRaceMultipliers"):
@@ -336,7 +344,7 @@ SERVICES = {
 }
 
 
-def service_call(headers, body):
+def service_call(headers, body, server=None):
     """bin/xtsw call -> reply body."""
     cls = headers.get("x-classname", "").split(",")[0]          # Forza.WebServices.Hopper
     short = cls.rsplit(".", 1)[-1]
@@ -346,6 +354,8 @@ def service_call(headers, body):
     except ValueError:
         xuid = 0
     fn = SERVICES.get((short, method)) if cls.startswith("Forza.WebServices.") else None
+    if (short, method) == ("Hopper", "GetGameOptions"):  # needs the server's world sessions
+        fn = lambda xuid, body: hopper_get_game_options(server, xuid, body)  # noqa: E731
     if fn is None:
         log.info("title: %s.%s from %016X (%d bytes): empty answer", cls, method, xuid,
                  len(body))
@@ -365,7 +375,7 @@ def handle(server, method, path, headers, body, peer):
     if method == "POST" and url.path.endswith("/o.xtsw"):
         log.info("LSP %s.%s (%d bytes)", headers.get("x-classname", "?").split(",")[0],
                  headers.get("x-method", "?"), len(body))
-        return 200, "bin/xtsw", service_call(headers, body)
+        return 200, "bin/xtsw", service_call(headers, body, server)
     log.info("LSP request %s %s (%d bytes)", method, path, len(body))
     if url.path.startswith("/storage/") and method == "GET":
         data = stored_file(url.path)

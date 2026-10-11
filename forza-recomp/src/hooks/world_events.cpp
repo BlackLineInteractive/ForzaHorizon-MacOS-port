@@ -1,0 +1,497 @@
+// forza - events from the Horizon World (docs/online_vision.md, phase 2).
+//
+// The Horizon World (Find Game's playlist 3, world_drop_in.cpp) runs one endless free
+// roam per session. The Forza Live server turns a world's next round into one of the
+// game's festival events (server/forza_world.py); this file is the client side, on the
+// world session's host:
+//
+// 1. Taking an event. The server sends WORLD_EVENT to the world's host (net.cpp ->
+//    LiveWorldEvent). The host's game asks for the next round's options again
+//    (sub_8286A800(game, 1), the vote-to-skip path; the game asks for round N+1 when
+//    round N starts, so the answer it holds is the world's), which the server answers
+//    with the event, then ends the free roam the way the pause menu's END FREE ROAM does:
+//    its own player's status becomes 5 (sub_8286A468; CSetPlayerReadyToReturnToLobby with
+//    the host flag), which every peer's CIsFreeRoamSessionOver (sub_825ADB30) reads from
+//    the host, and everyone returns to the lobby, where the event is the next round.
+// 2. The wait lobby. An event round's intermission is world_event_wait_seconds (30)
+//    instead of the world playlist's 5 s (+0x7E4/+0x7E8 of the online game, copied from
+//    the playlist's search settings), so the players in the world can pick a car under
+//    the event's restrictions and late ones can join. A grid full of humans starts at once.
+// 3. AI. The game fills the lobby with CPU drivers itself (sub_8287BBE0: min(MaxPlayers -
+//    humans, MaxAIPlayers)); their difficulty (+0x44A, applied by sub_82877470 after
+//    every fill) follows the human share of the grid: at most 1/3 Easy, 2/3 or more Hard,
+//    in between Medium.
+// 4. A kick for inactivity (or a vote kick) ended the online game re-entrantly: the
+//    session teardown (sub_82CF7278) pumps the session's messages, a queued second kick
+//    message ends the game again inside it and tears the session down under it, and the
+//    outer teardown reads the freed session (null). The nested kick is dropped.
+//
+// FORZA_EVENT_TRACE=1 logs the round options, AI fill, intermission and launch.
+
+#include "../kernel/live.h"
+#include "../platform/guest_memory.h"
+
+#include <rex/cvar.h>
+#include <rex/logging.h>
+#include <rex/ppc/context.h>
+#include <rex/ppc/func.h>
+#include <rex/system/kernel_state.h>
+#include <rex/system/xmemory.h>
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <vector>
+
+REXCVAR_DEFINE_BOOL(world_events, true, "Network/Forza Live",
+                    "Horizon World: the world's host takes the events the Forza Live server "
+                    "starts (ends the free roam into the event's lobby)");
+REXCVAR_DEFINE_INT32(world_event_wait_seconds, 30, "Network/Forza Live",
+                     "Horizon World: the wait lobby before an event, in seconds");
+
+namespace {
+constexpr uint32_t kWorldPlaylist = 3;  // server/forza_live_lsp.py WORLD_HOPPER
+constexpr uint32_t kModeFindGame = 7;
+constexpr uint8_t kPresetFreeRoam = 7;
+constexpr uint32_t kOnlineGame = 0x83305CC4;  // pointer to the online game object
+constexpr uint32_t kIsAiPlayer = 0x82865528;  // predicate for sub_828754A0: CPU driver
+constexpr uint8_t kStatusHostEndsFreeRoam = 5;
+
+// Online game fields (offsets from *(kOnlineGame)).
+constexpr uint32_t kMode = 0x28, kState = 0x2C, kInGame = 0x30, kLaunchTime = 0x4C;
+constexpr uint32_t kPlayers = 0x10C, kHost = 0x158;
+constexpr uint32_t kOptions = 0x1B4;  // the round's game options (0x2D0 bytes)
+constexpr uint32_t kMaxPlayers = 0x1CC, kMaxAi = 0x1CD, kAiDifficulty = 0x44A;
+constexpr uint32_t kNextReady = 0x484, kNextOptions = 0x488;  // the next round's options
+constexpr uint32_t kIntermission = 0x7E4, kShortIntermission = 0x7E8;
+
+uint32_t Load32(const uint8_t* p) { return uint32_t(p[0]) << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+void Store32(uint8_t* p, uint32_t v) {
+  p[0] = uint8_t(v >> 24);
+  p[1] = uint8_t(v >> 16);
+  p[2] = uint8_t(v >> 8);
+  p[3] = uint8_t(v);
+}
+
+bool Trace() {
+  static const bool on = [] {
+    const char* v = std::getenv("FORZA_EVENT_TRACE");
+    return v && *v && *v != '0';
+  }();
+  return on;
+}
+
+int64_t NowMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+// The server's request (network thread -> game thread).
+std::atomic<uint32_t> requested_event{0};
+std::atomic<int64_t> requested_at{0};
+
+// Host side of taking an event (game thread).
+enum class Taking { kIdle, kAsked, kEnded };
+Taking taking = Taking::kIdle;
+uint32_t taking_event = 0;
+int64_t taking_since = 0;
+
+// The world playlist's own intermission, restored after an event.
+uint32_t world_intermission[2] = {0, 0};
+bool intermission_changed = false;
+uint8_t last_difficulty = 0xFF;
+
+// The online game while Find Game runs the world playlist, else 0.
+uint32_t WorldPlaylistGame(uint8_t* base) {
+  if (forza::LiveMatchPlaylist() != kWorldPlaylist) return 0;
+  const uint32_t game = Load32(forza::GuestPtr(base, kOnlineGame));
+  if (!game || Load32(forza::GuestPtr(base, game + kMode)) != kModeFindGame) return 0;
+  return game;
+}
+
+// Calls a guest function on a copy of the hooked function's context; returns r3.
+uint32_t CallGuest(PPCContext& ctx, uint8_t* base, PPCFunc* fn, uint32_t r3, uint32_t r4 = 0,
+                   uint32_t r5 = 0) {
+  PPCContext saved = ctx;
+  ctx.r3.u64 = r3;
+  ctx.r4.u64 = r4;
+  ctx.r5.u64 = r5;
+  fn(ctx, base);
+  const uint32_t result = ctx.r3.u32;
+  ctx = saved;
+  return result;
+}
+
+// The rule of the vision: the human share of the grid sets the CPU drivers' level
+// (MPAIDifficultyMap rows 0 Easy, 1 Medium, 2 Hard). server/forza_world.py has the same.
+uint8_t AiDifficulty(uint32_t humans, uint32_t grid) {
+  if (3 * humans <= grid) return 0;
+  if (3 * humans >= 2 * grid) return 2;
+  return 1;
+}
+
+void LogGame(const char* what, uint8_t* base, uint32_t game, uint32_t lr) {
+  const uint8_t* g = forza::GuestPtr(base, game);
+  REXLOG_INFO("EVENT: {} (lr {:08X}): mode {} state {} in game {} host {} players {} preset {} "
+              "track {} max {} max AI {} AI diff {} next {} preset {} round {} intermission "
+              "{}/{} launch {}",
+              what, lr, Load32(g + kMode), Load32(g + kState), Load32(g + kInGame), g[kHost],
+              Load32(g + kPlayers), g[kOptions], Load32(g + kOptions + 4), g[kMaxPlayers],
+              g[kMaxAi], g[kAiDifficulty], g[kNextReady], g[kNextOptions],
+              (g[0x7DC] << 8) | g[0x7DD], Load32(g + kIntermission),
+              Load32(g + kShortIntermission), Load32(g + kLaunchTime));
+}
+}  // namespace
+
+extern "C" REX_FUNC(__imp__sub_8286A800);
+extern "C" REX_FUNC(__imp__sub_8287E538);
+extern "C" REX_FUNC(__imp__sub_8287BBE0);
+extern "C" REX_FUNC(__imp__sub_8286A250);
+extern "C" REX_FUNC(__imp__sub_828786E8);
+extern "C" REX_FUNC(__imp__sub_8286E660);
+extern "C" REX_FUNC(__imp__sub_825ADB30);
+extern "C" REX_FUNC(__imp__sub_8287F670);
+extern "C" REX_FUNC(__imp__sub_82877470);
+extern "C" REX_FUNC(__imp__sub_8286FC98);
+extern "C" REX_FUNC(__imp__sub_82876378);
+extern "C" REX_FUNC(__imp__sub_828653D8);
+extern "C" REX_FUNC(__imp__sub_8286A468);
+extern "C" REX_FUNC(__imp__sub_828754A0);
+extern "C" REX_FUNC(__imp__sub_8286A2E0);
+extern "C" REX_FUNC(__imp__sub_82878800);
+extern "C" REX_FUNC(__imp__sub_82875840);
+extern "C" REX_FUNC(__imp__sub_8247F018);
+extern "C" REX_FUNC(__imp__sub_82577AD8);
+extern "C" REX_FUNC(__imp__sub_828736E0);
+extern "C" REX_FUNC(__imp__sub_823FD208);
+extern "C" REX_FUNC(__imp__sub_82880A90);
+extern "C" REX_FUNC(__imp__sub_828653D8);
+extern "C" REX_FUNC(sub_8286A800);
+extern "C" REX_FUNC(sub_8286A468);
+
+namespace rex::runtime {
+PPCFunc* ResolveIndirectFunction(uint32_t guest_address);
+}
+
+namespace {
+// Calls the guest virtual method at `offset` of `object` (r3 = object, r4 = arg); r3.
+uint32_t CallVirtual(PPCContext& ctx, uint8_t* base, uint32_t object, uint32_t offset,
+                     uint32_t r4 = 0) {
+  const uint32_t vtable = Load32(forza::GuestPtr(base, object));
+  PPCFunc* fn = rex::runtime::ResolveIndirectFunction(Load32(forza::GuestPtr(base, vtable + offset)));
+  return fn ? CallGuest(ctx, base, fn, object, r4) : 0;
+}
+
+// The player manager's (sub_82577AD8) players: its list method at `method` (0x18, 0x1C or
+// 0x20: the lists the online game walks) fills a guest std::list, which lives on the
+// guest stack below the hooked function's frame while the calls run.
+std::vector<uint32_t> ManagerPlayers(PPCContext& ctx, uint8_t* base, uint32_t method) {
+  std::vector<uint32_t> players;
+  PPCContext saved = ctx;
+  const uint32_t sp = ctx.r1.u32, list = sp - 0x40, alloc = sp - 0x38;
+  ctx.r1.u64 = sp - 0x100;
+  ctx.r3.u64 = list;
+  ctx.r4.u64 = alloc;
+  __imp__sub_8247F018(ctx, base);
+  __imp__sub_82577AD8(ctx, base);
+  const uint32_t manager = ctx.r3.u32;
+  const uint32_t vtable = Load32(forza::GuestPtr(base, manager));
+  if (PPCFunc* fill = rex::runtime::ResolveIndirectFunction(
+          Load32(forza::GuestPtr(base, vtable + method)))) {
+    ctx.r3.u64 = manager;
+    ctx.r4.u64 = list;
+    fill(ctx, base);
+    const uint32_t head = Load32(forza::GuestPtr(base, list));
+    uint32_t node = Load32(forza::GuestPtr(base, head));
+    for (int n = 0; node != head && n < 64; ++n) {
+      players.push_back(Load32(forza::GuestPtr(base, node + 8)));
+      node = Load32(forza::GuestPtr(base, node));
+    }
+  }
+  ctx.r3.u64 = list;
+  __imp__sub_828736E0(ctx, base);
+  ctx.r3.u64 = Load32(forza::GuestPtr(base, list));
+  __imp__sub_823FD208(ctx, base);
+  ctx = saved;
+  return players;
+}
+
+// A player's lobby status record (player->vfunc 0x70): status +6, CPU driver flag +7.
+uint32_t StatusRecord(PPCContext& ctx, uint8_t* base, uint32_t player) {
+  return CallVirtual(ctx, base, player, 0x70);
+}
+// Humans in the online game: its players (+0x10C) less the CPU drivers.
+uint32_t Humans(PPCContext& ctx, uint8_t* base, uint32_t game) {
+  const uint32_t players = Load32(forza::GuestPtr(base, game + kPlayers));
+  const uint32_t ai = CallGuest(ctx, base, __imp__sub_828754A0, game, kIsAiPlayer);
+  return players > ai ? players - ai : 0;
+}
+}  // namespace
+
+// sub_8286A800(game, skip): the host asks for the next round's options (Find Game: the
+// hopper's GetGameOptions, round counter +0x7DC).
+extern "C" REX_FUNC(sub_8286A800) {
+  if (Trace()) LogGame("next round options requested", base, ctx.r3.u32, uint32_t(ctx.lr));
+  __imp__sub_8286A800(ctx, base);
+}
+
+// sub_8287E538(game, options): new game options for the online game.
+extern "C" REX_FUNC(sub_8287E538) {
+  if (Trace()) {
+    const uint8_t* o = forza::GuestPtr(base, ctx.r4.u32);
+    REXLOG_INFO("EVENT: options set (lr {:08X}): preset {} track {} max {} max AI {} AI diff {}",
+                uint32_t(ctx.lr), o[0], Load32(o + 4), o[0x18], o[0x19], o[0x296]);
+  }
+  __imp__sub_8287E538(ctx, base);
+}
+
+// sub_8287BBE0(game, flag): the host adds or removes CPU drivers.
+extern "C" REX_FUNC(sub_8287BBE0) {
+  if (Trace()) LogGame("AI fill", base, ctx.r3.u32, uint32_t(ctx.lr));
+  __imp__sub_8287BBE0(ctx, base);
+}
+
+// sub_8286A250(game, launch time, second time): the host starts the intermission.
+extern "C" REX_FUNC(sub_8286A250) {
+  if (Trace()) LogGame("intermission", base, ctx.r3.u32, uint32_t(ctx.lr));
+  __imp__sub_8286A250(ctx, base);
+}
+
+// sub_828786E8(game): the host launches the round.
+extern "C" REX_FUNC(sub_828786E8) {
+  if (Trace()) LogGame("launch", base, ctx.r3.u32, uint32_t(ctx.lr));
+  __imp__sub_828786E8(ctx, base);
+}
+
+// sub_8286E660(game): a round started (in game); its host asks for the next one.
+extern "C" REX_FUNC(sub_8286E660) {
+  if (Trace()) LogGame("round started", base, ctx.r3.u32, uint32_t(ctx.lr));
+  __imp__sub_8286E660(ctx, base);
+}
+
+// sub_8286A2E0(game, ...): the launch builds the race settings and loads the round.
+extern "C" REX_FUNC(sub_8286A2E0) {
+  if (Trace()) LogGame("load", base, ctx.r3.u32, uint32_t(ctx.lr));
+  __imp__sub_8286A2E0(ctx, base);
+}
+
+// sub_82878800(game): a peer learns that the host launched (state 11).
+extern "C" REX_FUNC(sub_82878800) {
+  if (Trace()) LogGame("peer launch", base, ctx.r3.u32, uint32_t(ctx.lr));
+  __imp__sub_82878800(ctx, base);
+}
+
+// sub_82875840(game): the round starts on every peer; it loads the round (sub_8286A2E0)
+// unless a local player is already in game (status 3-5: a player who joined a game in
+// progress). A world player who ended the free roam into an event's lobby could still
+// carry its free-roam status there (traced, see docs); it is set back to the lobby's.
+extern "C" REX_FUNC(sub_82875840) {
+  const uint32_t game = ctx.r3.u32, lr = uint32_t(ctx.lr);
+  if (Trace()) LogGame("round start", base, game, lr);
+  if (REXCVAR_GET(world_events) && game == WorldPlaylistGame(base)) {
+    uint8_t* g = forza::GuestPtr(base, game);
+    if (g[kOptions] != kPresetFreeRoam && !g[kHost] && Load32(g + kState) == 11) {
+      const uint32_t player = CallGuest(ctx, base, __imp__sub_828653D8, game);
+      const uint32_t record = player ? StatusRecord(ctx, base, player) : 0;
+      const uint8_t old = record ? forza::GuestPtr(base, record)[6] : 0;
+      if (old >= 3 && old <= 5) {
+        REXLOG_INFO("WORLD: our status was still {} at the event's start: back to the lobby's",
+                    old);
+        CallGuest(ctx, base, sub_8286A468, game, player, 2);
+      }
+    }
+  }
+  __imp__sub_82875840(ctx, base);
+  if (Trace()) LogGame("round start done", base, game, lr);
+}
+
+// sub_8286A468(game, player, status): this console sets a player's lobby status (0-2 in
+// the lobby, 3 loading, 4 in game, 5 ready to return to the lobby / the host ends a free
+// roam, 6 gone). The CPU drivers of an online lobby are the host's players, and nothing
+// moves them on: the race waits for every player to be in game
+// (CWaitForAllPlayersToHaveLoadedToInGame, up to 45 s), then kicks those who aren't
+// (CKickFailedLoadPlayers), the CPU drivers with them; after the race it waits for
+// everyone to be ready to return to the lobby ("WAITING FOR OTHER PLAYERS...", about 50
+// s). In an event the CPU drivers follow the host's own player into 4 and 5.
+extern "C" REX_FUNC(sub_8286A468) {
+  const uint32_t game = ctx.r3.u32, player = ctx.r4.u32, status = ctx.r5.u32;
+  if (Trace()) {
+    REXLOG_INFO("EVENT: status of player {:08X} -> {} (lr {:08X})", player, status,
+                uint32_t(ctx.lr));
+  }
+  __imp__sub_8286A468(ctx, base);
+  if ((status != 4 && status != 5) || !REXCVAR_GET(world_events) ||
+      game != WorldPlaylistGame(base)) {
+    return;
+  }
+  uint8_t* g = forza::GuestPtr(base, game);
+  if (!g[kHost] || g[kOptions] == kPresetFreeRoam) return;
+  if (player != CallGuest(ctx, base, __imp__sub_828653D8, game)) return;
+  int count = 0;
+  for (const uint32_t p : ManagerPlayers(ctx, base, 0x20)) {
+    const uint32_t record = StatusRecord(ctx, base, p);
+    const uint8_t* r = forza::GuestPtr(base, record);
+    if (record && r[7] == 1 && r[6] != status) {
+      CallGuest(ctx, base, sub_8286A468, game, p, status);
+      ++count;
+    }
+  }
+  if (count) {
+    REXLOG_INFO("WORLD: the host is {}: {} CPU driver(s) too",
+                status == 4 ? "in game" : "ready to return to the lobby", count);
+  }
+}
+
+// sub_82880A90(status record, status): the store behind every status change.
+extern "C" REX_FUNC(sub_82880A90) {
+  if (Trace()) {
+    const uint8_t* r = forza::GuestPtr(base, ctx.r3.u32);
+    if (r[6] != ctx.r4.u8) {
+      REXLOG_INFO("EVENT: status record {:08X}{} {} -> {} (lr {:08X})", ctx.r3.u32,
+                  r[7] == 1 ? " (CPU)" : "", r[6], ctx.r4.u8, uint32_t(ctx.lr));
+    }
+  }
+  __imp__sub_82880A90(ctx, base);
+}
+
+// sub_825ADB30: CIsFreeRoamSessionOver's update, every frame of the online free roam on
+// every peer ("yes" once the host's status is 5). On the world's host it takes the event
+// the server asked for.
+extern "C" REX_FUNC(sub_825ADB30) {
+  const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0;
+  if (game) {
+    uint8_t* g = forza::GuestPtr(base, game);
+    const bool world = g[kOptions] == kPresetFreeRoam && g[kHost] != 0;
+    const uint32_t event = requested_event.load();
+    const int64_t now = NowMs();
+    if (!world) {
+      taking = Taking::kIdle;
+    } else if (taking == Taking::kIdle && event && now - requested_at.load() < 10000) {
+      taking = Taking::kAsked;
+      taking_event = event;
+      taking_since = now;
+      requested_event.store(0);
+      REXLOG_INFO("WORLD: the server starts event {}: asking for the next round", event);
+      CallGuest(ctx, base, sub_8286A800, game, 1);
+    } else if (taking == Taking::kAsked) {
+      const bool next_is_event = g[kNextReady] && g[kNextOptions] != kPresetFreeRoam;
+      if (next_is_event || now - taking_since > 15000) {
+        const uint32_t player = CallGuest(ctx, base, __imp__sub_828653D8, game);
+        REXLOG_INFO("WORLD: {} the free roam for event {} (next round preset {})",
+                    next_is_event ? "ending" : "no event round came; ending anyway",
+                    taking_event, g[kNextOptions]);
+        if (player) CallGuest(ctx, base, sub_8286A468, game, player, kStatusHostEndsFreeRoam);
+        taking = Taking::kEnded;
+      }
+    }
+  }
+  __imp__sub_825ADB30(ctx, base);
+}
+
+// sub_8287F670(game): the lobby's update, every frame (the host starts the intermission
+// and launches). An event round of the world playlist waits world_event_wait_seconds and
+// starts at once when its grid is all humans.
+extern "C" REX_FUNC(sub_8287F670) {
+  if (const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0) {
+    uint8_t* g = forza::GuestPtr(base, game);
+    const bool event = g[kOptions] != kPresetFreeRoam;
+    if (event) taking = Taking::kIdle;  // the free roam that took the event is over
+    if (event) {
+      const uint32_t wait = uint32_t(std::max(0, REXCVAR_GET(world_event_wait_seconds))) * 1000;
+      if (!intermission_changed) {
+        world_intermission[0] = Load32(g + kIntermission);
+        world_intermission[1] = Load32(g + kShortIntermission);
+        intermission_changed = true;
+      }
+      if (Load32(g + kIntermission) != wait) {
+        Store32(g + kIntermission, wait);
+        Store32(g + kShortIntermission, wait);
+        REXLOG_INFO("WORLD: event round (preset {}, track {}): {} s wait lobby", g[kOptions],
+                    Load32(g + kOptions + 4), wait / 1000);
+      }
+      const uint32_t launch = Load32(g + kLaunchTime);
+      if (g[kHost] && launch > 1 && Load32(g + kState) == 4) {
+        const uint32_t humans = Humans(ctx, base, game);
+        if (humans >= g[kMaxPlayers]) {
+          Store32(g + kLaunchTime, 1);  // the launch time has passed: launch now
+          REXLOG_INFO("WORLD: the event's grid is full of humans ({}): starting now", humans);
+        }
+      }
+    } else if (!event && intermission_changed) {
+      Store32(g + kIntermission, world_intermission[0]);
+      Store32(g + kShortIntermission, world_intermission[1]);
+      intermission_changed = false;
+      REXLOG_INFO("WORLD: world round: {} ms intermission again", world_intermission[0]);
+    }
+  }
+  __imp__sub_8287F670(ctx, base);
+}
+
+// sub_82877470(game): the host gives every CPU driver the round's AI difficulty (+0x44A),
+// after each AI fill. In a world event it follows the human share of the grid.
+extern "C" REX_FUNC(sub_82877470) {
+  if (const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0) {
+    uint8_t* g = forza::GuestPtr(base, game);
+    if (g[kOptions] != kPresetFreeRoam && g[kHost]) {
+      const uint32_t humans = Humans(ctx, base, game);
+      const uint8_t level = AiDifficulty(humans, g[kMaxPlayers] ? g[kMaxPlayers] : 8);
+      g[kAiDifficulty] = level;
+      if (level != last_difficulty) {
+        static const char* const kNames[] = {"Easy", "Medium", "Hard"};
+        REXLOG_INFO("WORLD: {} human(s) of {}: CPU drivers {}", humans, g[kMaxPlayers],
+                    kNames[level]);
+        last_difficulty = level;
+      }
+    }
+  }
+  __imp__sub_82877470(ctx, base);
+}
+
+// sub_82876378(game, player, flag): kick a player (CKickFailedLoadPlayers, vote kicks).
+// A CPU driver is the host's own player, so kicking one shows the host "you have been
+// voted out" and ends the host's online game (reason 3). CPU drivers are not kicked;
+// the AI fill removes them when humans need their slots.
+extern "C" REX_FUNC(sub_82876378) {
+  const uint32_t record = REXCVAR_GET(world_events) && WorldPlaylistGame(base)
+                              ? StatusRecord(ctx, base, ctx.r4.u32)
+                              : 0;
+  if (record && forza::GuestPtr(base, record)[7] == 1) {
+    REXLOG_INFO("WORLD: not kicking CPU driver {:08X} (status {})", ctx.r4.u32,
+                forza::GuestPtr(base, record)[6]);
+    return;
+  }
+  __imp__sub_82876378(ctx, base);
+}
+
+// sub_8286FC98(game, reason): the local player was removed from the online game (3: voted
+// out, 7: kicked for inactivity): a message box, then the online game ends (sub_8288B840
+// -> sub_8287DA10, which tears the session down and pumps its messages). A second kick
+// message pumped there re-entered this and tore the session down inside the outer
+// teardown, which then read the freed session. Nested calls are dropped.
+extern "C" REX_FUNC(sub_8286FC98) {
+  static thread_local int depth = 0;
+  if (depth > 0) {
+    REXLOG_INFO("WORLD: removed from the online game again (reason {}) while ending it: ignored",
+                ctx.r4.u32);
+    return;
+  }
+  ++depth;
+  __imp__sub_8286FC98(ctx, base);
+  --depth;
+}
+
+namespace forza {
+// WORLD_EVENT from the server (net.cpp): op u8 (1: an event waits for this world's host),
+// event id u32, world session id (8 bytes).
+void LiveWorldEvent(const uint8_t* p, size_t n) {
+  if (n < 5 || p[0] != 1) return;
+  const uint32_t event = Load32(p + 1);
+  if (requested_event.exchange(event) != event || Trace()) {
+    REXLOG_INFO("FORZA_LIVE: the server starts event {} in our world", event);
+  }
+  requested_at.store(NowMs());
+}
+}  // namespace forza

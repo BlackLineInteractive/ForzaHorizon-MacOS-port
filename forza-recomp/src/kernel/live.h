@@ -66,6 +66,10 @@ uint32_t LiveMatchPlaylist();
 // matchmaking session we joined (live_xmsg.cpp).
 void LiveMatchTick();
 
+// WORLD_EVENT from the server (net.cpp): an event waits for the Horizon World we host
+// (hooks/world_events.cpp takes it).
+void LiveWorldEvent(const uint8_t* body, size_t size);
+
 // The online game's "this console hosts the session" flag: 1, 0, or -1 without an online
 // game (hooks/world_drop_in.cpp).
 int OnlineGameIsHost();

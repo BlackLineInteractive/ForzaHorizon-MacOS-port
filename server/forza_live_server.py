@@ -23,8 +23,10 @@ import random
 import signal
 import struct
 import time
+import urllib.parse
 
 import forza_live_lsp as lsp
+import forza_world as world
 
 MAGIC = b"RLV1"
 VERSION = 1
@@ -32,6 +34,7 @@ VERSION = 1
 (HELLO, WELCOME, ERROR, BROADCAST, RELAY, FORWARD, PUNCH, PUNCH_ACK, DATA, BYE, LIST, PEERS,
  PRESENCE, INVITE) = range(1, 15)
 MATCH_PUBLISH, MATCH_SEARCH, MATCH_RESULTS = 15, 16, 17  # matchmaking sessions
+WORLD_EVENT = 18  # server -> a Horizon World's host: end the free roam for an event
 MAX_MATCH_RECORD = 1300
 SESSION_INFO_SIZE = 0x3C  # XSESSION_INFO: session id, host XNADDR, key-exchange key
 MAX_PRESENCE_EXTRA = 1024
@@ -384,6 +387,52 @@ class ForzaLive(asyncio.DatagramProtocol):
             size += len(entry)
         self.send(peer.addr, MATCH_RESULTS, struct.pack(">IH", request, len(entries)) + b"".join(entries))
 
+    # --- Horizon World events (forza_world.py) ---
+
+    def world_sessions(self):
+        """The Horizon World sessions: {session id: (its host peer, humans)}. A session
+        whose host left is led by its standby host (see standby_sessions)."""
+        key = lsp.WORLD_HOPPER
+        worlds = {}
+        for p in self.peers.values():
+            match = getattr(p, "match", None)
+            if match and match[0] == key:
+                worlds[match[1][:8]] = (p, self.match_slots(match[1])[0])
+        members = {}
+        for p in self.peers.values():
+            standby = getattr(p, "standby", None)
+            if standby and standby[0] == key and standby[1][:8] not in worlds:
+                members.setdefault(standby[1][:8], []).append(p)
+        for sid, group in members.items():
+            group.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
+            worlds[sid] = (group[0], len(group))
+        return worlds
+
+    def world_of(self, xuid):
+        """(session id, humans) of the world the player with this XUID hosts, or None."""
+        for sid, (host, humans) in self.world_sessions().items():
+            if host.xuid == xuid:
+                return sid, humans
+        return None
+
+    def world_tick(self):
+        """Every 2 s: tell each world's host about an event waiting for it (op u8 1,
+        event id u32); the client ends the free roam once the event is its next round."""
+        worlds = self.world_sessions()
+        for sid, event in world.WORLDS.tick(set(worlds)):
+            host = worlds[sid][0]
+            self.send(host.addr, WORLD_EVENT, struct.pack(">BI", 1, event[0]) + sid)
+
+    def world_request(self, session, event_id):
+        """GET /world/event?session=<id hex>|all[&event=<id>]: start an event in a world."""
+        worlds = self.world_sessions()
+        sids = list(worlds) if session in ("", "all") else \
+            [sid for sid in worlds if sid.hex() == session.lower()]
+        return {"requested": [{"session": sid.hex(), "host": worlds[sid][0].name,
+                               "humans": worlds[sid][1],
+                               "event": world.WORLDS.request(sid, event_id)[0]} for sid in sids],
+                "worlds": [sid.hex() for sid in worlds]}
+
     def drop(self, peer, why):
         self.peers.pop(peer.id, None)
         if self.by_addr.get(peer.addr) is peer:
@@ -406,9 +455,12 @@ class ForzaLive(asyncio.DatagramProtocol):
                  {"playlist": p.match[0], "session": p.match[1][:8].hex(),
                   "players": self.match_slots(p.match[1])[0],
                   "slots": sum(self.match_slots(p.match[1]))}})
+        worlds = {sid.hex(): {"host": host.name, "humans": humans,
+                              "event": world.WORLDS.state.get(sid)}
+                  for sid, (host, humans) in self.world_sessions().items()}
         return {"server": "forza-live", "protocol": VERSION, "uptime": int(time.time() - self.started),
                 "players": len(self.peers), "relayed_packets": self.relayed_packets,
-                "dropped_packets": self.dropped_packets, "rooms": rooms}
+                "dropped_packets": self.dropped_packets, "rooms": rooms, "worlds": worlds}
 
 
 async def read_request(reader):
@@ -445,8 +497,14 @@ async def http_handler(server, reader, writer):
             keep = headers.get("connection", "").lower() == "keep-alive"
             conn = ("Connection: Keep-Alive" if keep else "Connection: close",)
             if path in ("/", "/status"):
-                reply = response(200, json.dumps(server.status(), indent=2).encode(),
+                reply = response(200, json.dumps(server.status(), indent=2, default=str).encode(),
                                  "application/json", conn)
+            elif path.startswith("/world/event"):
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+                event = int(query.get("event", ["0"])[0] or 0)
+                result = server.world_request(query.get("session", ["all"])[0], event)
+                reply = response(200, json.dumps(result, indent=2).encode(), "application/json",
+                                 conn)
             else:
                 try:
                     status, content_type, data = lsp.handle(server, method, path, headers, body,
@@ -481,11 +539,13 @@ async def main():
                         help="bytes per second the server relays for one player (bursts of 4 s)")
     parser.add_argument("-v", "--verbose", action="store_true")
     lsp.add_arguments(parser)
+    world.add_arguments(parser)
     args = parser.parse_args()
-    lsp.configure(args)
-    set_rate_limit(args.rate_limit)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(message)s")
+    lsp.configure(args)
+    world.configure(args)
+    set_rate_limit(args.rate_limit)
 
     loop = asyncio.get_running_loop()
     transport, server = await loop.create_datagram_endpoint(
@@ -496,9 +556,14 @@ async def main():
         await asyncio.start_server(lambda r, w: http_handler(server, r, w), args.host, args.http_port)
         log.info("title servers and status page on http://%s:%d/", args.host, args.http_port)
     try:
+        ticks = 0
         while True:
-            await asyncio.sleep(5)
-            server.expire()
+            await asyncio.sleep(1)
+            ticks += 1
+            if ticks % 2 == 0:
+                server.world_tick()
+            if ticks % 5 == 0:
+                server.expire()
     finally:
         transport.close()
 
