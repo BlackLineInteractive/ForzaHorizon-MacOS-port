@@ -359,7 +359,15 @@ Message Center's first-visit popup, A JOIN, "You are about to join the Horizon K
 club. Are you sure?", A: `AcceptClanInvite(1, id)`, the message cleared, "Would you like
 to set a waypoint to the Car Club now?", and the club had 3 members (A saw DriverB in the
 member list); the leader and A got NEW CLUB MEMBER. A's QUIT CLUB (two confirmations,
-`LeaveClan`) sent MEMBER QUIT to the leader and B (co-leader by then).
+`LeaveClan`) sent MEMBER QUIT to the leader and B (co-leader by then). Then the other
+way (HZN receiving requests, B co-leader): A's FIND CLUB, the [HZN] row, REQUEST TO JOIN
+CLUB (`RequestJoiningClanByName("HZN")`), "Request sent successfully"; B's Message Center:
+CLUB REQUEST "DriverA has sent a request to join your Car Club. Would you like DriverA to
+join?", A ACCEPT, "Are you sure you want to add DriverA to your car club?", A:
+`ApproveRequestToJoin(A)`, the message cleared, NEW CLUB MEMBER to the others; A's next
+poll: MEMBERSHIP ACCEPTED "Welcome to the club. Your membership to the Horizon Kings club
+has been accepted." (In an invite-only club the game offers only SHOW GAMER CARD and ADD
+AS FAVORITE on that row.)
 
 ### The Auction House and car gifts (`server/forza_market.py`)
 
@@ -388,18 +396,43 @@ model follows the game's own tables:
   `wasOriginallyFromAuctionHouse`, one more owner in its history). A bid at the buyout
   price ends the auction at once.
 
-**Not reachable in the game so far.** None of the menus checked opens the Auction House:
-the festival's Autoshow (manufacturers and a "$" tile, which is TRADE-IN CARS), Dak's
-Garage, the Paintshop (Design Creator, Load Design, Design Storefront), Race Central,
-the Car Club, the pause menu and the party lobby. The code is there (FM4's: the screens
-around `0x82864000`-`0x82888000`, `sub_82683930` the auction house screen, the config
-loader `sub_82873DC0` -> `GetGlobalConfig`, a menu entry `0x104` in the table at
-`0x8323E8C0` whose enable callback `sub_82674790` waits for that config) but no request
-to the Auction service was seen. Gifting has stubs only for `SendCarGift`,
-`RetrieveCarGift`, `RetrieveCreditsGift`, `MarkFileGiftRetrieved` (no
-`GetGiftsForUser`/`SendCreditsGift` in this game): a received gift arrives as a Message
-Center notification (`FileDepot_GiftCar` and others, below), whose parameter format is
-not known yet.
+**Not reachable: the Auction House's screens have no scenes in this game.** None of the
+menus opens it (checked: the festival's Autoshow, whose "$" tile is TRADE-IN CARS, Dak's
+Garage, the Paintshop, Race Central, the Car Club, the pause menu, the party lobby), and
+the reason is in the UI tables:
+
+- The screen table (filled by `sub_82695AE0`: per screen id N, the factory at +8N+4 and the
+  scene name at +8N+8 of the screen manager) maps screens 7, 8 and 0xA to the classes
+  `ForzaUI::CAuctionHouseMainUI` (factory `sub_8268FDA8`), `CAuctionHouseDetailsUI`
+  (`sub_8268FDF0`) and `CAuctionHouseCreateUI` (`sub_8268FE40`), all three with the scene
+  name `SCENE_REMOVED`; only one other screen (0xF) has it. (`CAuctionHouseUIScene`,
+  `CAuctionHouseSearchCriteriaPopup` and the data sources `CAuctionHouseSearchDataSource`
+  and `CAuctionHouseMyAuctionsDataSource` are in the code too.)
+- `media/UI.zip` has no auction scene at all: its `Scenes/ui4` keep FM4's storefront
+  scenes (`603_d_file_details`, `605_X_MYS_MY_STOREFRONT`, `606_D_POP_FILTER`,
+  `610_X_MYS_Share_Files`) but nothing for the auctions, and no string in the binary names
+  one.
+- The menu entries that open them are FM4's: the shared item table at `0x8323E8C0`
+  (index 0: screen 0x104, a wait popup gated by `sub_82674790` on the auction config) and
+  the per-menu tables at `0x8323E7C0` (indexes 3 and 6: screens 8 and 0xB) and `0x8323E408`
+  (index 4: screen 0xA), used through `sub_82671420` / `sub_826714F0` by menus whose
+  buttons no Forza Horizon scene has.
+
+A hook could open screen 7, but its scene would have to be built: the screen classes
+bind named controls of FM4's scene (lists, text fields, the car viewer), which the
+generic Forza Horizon scenes do not have. Without the scene file format (`.bgf`) and an
+editor that is out of reach, so the Auction House stays server-side only. Its
+notifications (outbid, sold, won, failed) are listed by the Message Center without a
+title or text.
+
+Gifting has stubs for `SendCarGift`, `RetrieveCarGift`, `RetrieveCreditsGift`,
+`MarkFileGiftRetrieved` (no `GetGiftsForUser`/`SendCreditsGift` in this game). A gift
+arrives as a Message Center notification (below), whose DOWNLOAD collects it. The sender
+side is `ForzaUI::CMyCars` (screen 0xA1, scene `108_C_BUY_CARSELECT`): its car options
+add GIFT CAR (`sub_827093B8`, for a car that is not the one being driven), which opens
+the recipient list (`sub_826EA0A0`: popup screen 0xDE over the friends list; every other
+player online is a friend here) and on the choice (action 7, `sub_826F0330`) runs
+`Forza::CGiftingTransactionSendCarGift` (`sub_8289D9E8` -> `SendCarGift`).
 
 ### Notifications (Message Center) (`server/forza_notifications.py`)
 
