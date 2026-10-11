@@ -97,7 +97,9 @@ set(FORZA_SOURCES
     src/platform/vulkan_hooks.cpp
 )
 
+# fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.
 if(WIN32)
+    list(REMOVE_ITEM FORZA_SOURCES src/debug/fiber_trace.cpp)
     add_executable(forza WIN32 ${FORZA_SOURCES})
     target_compile_definitions(forza PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(forza PRIVATE ws2_32)

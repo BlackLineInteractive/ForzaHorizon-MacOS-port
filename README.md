@@ -46,7 +46,7 @@ recompiled C++ is generated from your copy on your machine and never committed h
 | Saves | Saved and loaded; Xenia saves load with `profile_xuid` set to the Xenia profile's XUID |
 | DLC | All 23 packages install with `tools/install_dlc.py` and are mounted by the game |
 | Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold; Turn 10's title services for sign-in, playlists and online XP; two players find each other with Find Game and race, the race awards XP and credits; parties (Invite Friends), Create Custom Game, online free roam. Storefront, auctions, gifting and scoreboards answer empty |
-| Windows | Not yet |
+| Windows | Cross-compiled from Linux (`tools/build_windows.sh`), tested under Proton; not yet on Windows itself |
 
 ## Requirements
 
@@ -76,6 +76,28 @@ cmake -S forza-recomp -B forza-recomp/out/build/linux -G Ninja -DCMAKE_BUILD_TYP
   -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH=$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64
 ninja -C forza-recomp/out/build/linux
 ```
+
+## Windows
+
+The Windows version is cross-compiled from Linux with clang/clang-cl and lld-link, after the
+Linux build above (its codegen output in `forza-recomp/generated/` is reused, and step 3
+checks out the SDK source). `tools/build_windows.sh` builds the ReXGlue SDK for Windows
+from `~/rexglue-sdk-src-forza` with this project's patches and the Vulkan backend into
+`~/rexglue-sdk-patched-forza/0.10.0.24/win-amd64`, then the game, and packages it in
+`forza-recomp/out/dist/windows` (`--sdk-only` and `--game-only` split the long build):
+
+```sh
+brew install llvm lld                                  # clang, clang-cl, lld-link
+xwin --accept-license splat --output ~/.local/opt/xwin/sdk   # MSVC CRT + Windows SDK (Microsoft's license)
+tools/build_windows.sh
+tools/package_linux.sh                                 # the Linux package, forza-recomp/out/dist/linux
+```
+
+On Windows, extract the package, install the Microsoft Visual C++ 2015-2022 x64
+redistributable, extract your game files with `python xcontent_extract.py` and run
+`play.bat C:\path\to\extracted\game` (`--offline` for no Xbox LIVE; it starts a local
+Forza Live server when Python is installed, or uses `FORZA_SERVER` / `live_server` in
+`forza.toml`). Saves, the online identity and the log go to `Documents\forza`.
 
 ## Playing
 
