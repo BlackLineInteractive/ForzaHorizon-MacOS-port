@@ -175,7 +175,25 @@ game database's `HopperRaces` table (preset, track, laps: (1, 322, 3), (2, 155, 
 Playground Games playlist (2) serves the game's own Infected (4, arena track 215), Cat &
 Mouse (5, track 322, 2 laps) and King (6, track 215, 180 s) presets in turn
 (`server/playground_rounds.xml`, copied from `GameOptionPresets.xml` with their buckets,
-tag and scoring options; the game's own playground hopper default is a free roam).
+tag and scoring options; the game's own playground hopper default is a free roam);
+`--playground-games 6,4` picks and orders them.
+
+Tested with two consoles (fresh online profiles; both picked PLAYGROUND GAMES in Find
+Game, A hosted, B joined, the game started 40 s later): **Infected** in the arena (A
+"You're INFECTED, crash into the survivors!", B "You're a SURVIVOR...", both in rental Ford
+GTs), ended after its 300 s with B 1st (survived) and A 2nd: `WriteRaceStats` for both
+(hopper 2, place 1/2 and 2/2), `SubmitScore(type 4, 1100)` each (the online XP earned,
+board -1) and `UpdateAll` with online XP 1100; then the lobby "PLAYGROUND GAMES - KING"
+(Addison West Steelworks, Playground Arena, off road, 03:00 mins, both in rental Nissan
+GT-R R34s, INTERMISSION counting down) and **King** at night (B "You're the KING, run away
+from all the other players!", A "Crash into the KING to steal their golden Gamertag!")
+(`screenshots/2026-10-11_playground_0*.jpg`). King ended after its 3 minutes with B 1st (1500
+XP) and A 2nd (880 XP), online XP 2600 and 1980 (wristband 2), and the lobby went on to the
+next round (Infected again). With rental cars forced
+(`ForceOnlyRentalCars`) the lobby shows no car class vote. **Cat & Mouse** (an earlier
+run) loaded on both (A the mouse in a red Fiat 500 "race to the finish line! PROGRESS:
+0/2 LAPS", B a cat) but it only ends when the mouse finishes 2 laps, so nobody driving
+never ended it.
 
 `GetSearchSettings` returns the session filter (`numStartingMatchmakingQueryResults`,
 QoS limits, ranking factors) and `maxConnectAttemptsBeforeCreating`,
@@ -325,7 +343,7 @@ these handlers).
 - Scoreboards: a submission and ghost from a real finished race, the ghost download and a
   race against it, the leaderboard screens (`GetRows`), `NotifyRival` were not seen yet
   (only the rival from a submitted score, above).
-- The Playground category's playlist is answered but its game (preset 7) was not tested;
-  car class voting between rounds was seen, not exercised.
+- Playground Games: a round of Cat & Mouse played to its end, and three or more
+  consoles, were not tested.
 - `DLCMetadata.GetStringTableInfo` / `Content.DownloadContent` (DLC string tables and
   thumbnails served by Turn 10) are empty.
