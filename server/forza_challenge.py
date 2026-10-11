@@ -24,7 +24,7 @@ Message CHALLENGE (UDP kind 19), body op u8 then (big endian):
   server -> client
     16 NOTICE  seconds u8, text (u16 length + UTF-8; first line is the title)
     17 PROMPT  challenge id u32, seconds u8, challenger (u8 length + UTF-8)
-    18 START   challenge id u32, countdown ms u16, x f32, z f32, radius f32,
+    18 START   challenge id u32, countdown ms u16, x f32, y f32, z f32, radius f32,
                opponent (u8 length + UTF-8), destination (u8 length + UTF-8)
     19 END     challenge id u32, outcome u8 (1 won, 2 lost, 3 no winner, 4 called off),
                text (u16 length + UTF-8)
@@ -59,22 +59,23 @@ TEST_FINISH = 0.0         # tests: the finish this far ahead of the challenged c
 MIN_DISTANCE, BEST_DISTANCE, MAX_DISTANCE = 1200.0, 2500.0, 5000.0
 
 # Landmarks of Colorado: the endpoints of the game's DriveFromAToBFreeRoamChallenge
-# entries in media/gametunablesettings.zip FreeRoamChallenges.xml (world x, z; y up).
+# entries in media/gametunablesettings.zip FreeRoamChallenges.xml (world x, z, then the
+# height y; y is up).
 DESTINATIONS = [
-    ("Carson Warehouses", -4404, 1410),
-    ("Red Foot Ranch", -2358, -4981),
-    ("Red Rock Outpost", -5668, -5279),
-    ("Finley Dam Tunnel", 6235, 184),
-    ("Finley Dam", 6482, 156),
-    ("KH Outpost", 2159, -6070),
-    ("the Steelworks", -1515, 2613),
-    ("the Bunker", 4454, 1103),
-    ("the Media Centre", -3387, -1305),
-    ("the Lakeside Diner", 1567, -1904),
-    ("the Carson fountain", -4093, 832),
-    ("the Wind Farm", -1768, -2248),
-    ("the Beaumont cable car station", 3089, 3244),
-    ("Beaumont Outpost", 3396, 2750),
+    ("Carson Warehouses", -4404, 1410, -9),
+    ("Red Foot Ranch", -2358, -4981, 19),
+    ("Red Rock Outpost", -5668, -5279, 350),
+    ("Finley Dam Tunnel", 6235, 184, 100),
+    ("Finley Dam", 6482, 156, 300),
+    ("KH Outpost", 2159, -6070, 228),
+    ("the Steelworks", -1515, 2613, 42),
+    ("the Bunker", 4454, 1103, 170),
+    ("the Media Centre", -3387, -1305, 9),
+    ("the Lakeside Diner", 1567, -1904, 117),
+    ("the Carson fountain", -4093, 832, -11),
+    ("the Wind Farm", -1768, -2248, 73),
+    ("the Beaumont cable car station", 3089, 3244, 161),
+    ("Beaumont Outpost", 3396, 2750, 128),
 ]
 FINISH_RADIUS = 40.0
 
@@ -237,7 +238,8 @@ class Challenges:
             return
         if TEST_FINISH > 0:
             hl = math.hypot(b[3], b[4]) or 1.0
-            c.dest = ("the test finish", b[0] + b[3] / hl * TEST_FINISH, b[2] + b[4] / hl * TEST_FINISH)
+            c.dest = ("the test finish", b[0] + b[3] / hl * TEST_FINISH,
+                      b[2] + b[4] / hl * TEST_FINISH, b[1])
         else:
             c.dest = pick_destination((a[0] + b[0]) / 2, (a[2] + b[2]) / 2)
         c.state = "racing"
@@ -246,8 +248,8 @@ class Challenges:
         log.info("challenge %d: accepted, race to %s (%.0f, %.0f), %.0f m", c.id, c.dest[0],
                  c.dest[1], c.dest[2], dist)
         for me, other in ((c.a, c.b), (c.b, c.a)):
-            self.send(me, bytes([START]) + struct.pack(">IHfff", c.id, COUNTDOWN_MS, c.dest[1],
-                                                       c.dest[2], FINISH_RADIUS) +
+            self.send(me, bytes([START]) + struct.pack(">IHffff", c.id, COUNTDOWN_MS, c.dest[1],
+                                                       c.dest[3], c.dest[2], FINISH_RADIUS) +
                       text8(self.name(other) or "?") + text8(c.dest[0]))
 
     def finish(self, pid, cid, ms):

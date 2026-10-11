@@ -142,13 +142,62 @@ bool ReadCars(uint8_t* base, Car& own, std::vector<Car>* others) {
   return found;
 }
 
+// The game's sat nav. CSetSatNavDestinationPos (sub_829423B0) and the map's waypoint
+// (0x826E04E8) do it as: components = *sub_825F6FB0() (= *(*(*(0x832DF024) + 4) + 0x4C)),
+// node = sub_82CDC5A0(components[*(0x832FF090)], position in v1) (the road network's node
+// for a position), sub_8299FB40(components[*(0x832FF054)], node) (the sat nav's
+// destination; node 0 clears it). True when the call was made.
+extern "C" REX_FUNC(__imp__sub_82CDC5A0);
+extern "C" REX_FUNC(__imp__sub_8299FB40);
+bool SatNav(PPCContext& ctx, uint8_t* base, bool set, float x, float y, float z) {
+  const uint32_t root = Load32(forza::GuestPtr(base, kCarRoot));
+  if (!Plausible(root)) return false;
+  const uint32_t holder = Load32(forza::GuestPtr(base, root + 4));
+  if (!Plausible(holder)) return false;
+  const uint32_t components = Load32(forza::GuestPtr(base, holder + 0x4C));
+  if (!Plausible(components)) return false;
+  const uint32_t table = Load32(forza::GuestPtr(base, components));
+  if (!Plausible(table)) return false;
+  const uint32_t roads = Load32(forza::GuestPtr(
+      base, table + 4 * Load32(forza::GuestPtr(base, 0x832FF090))));
+  const uint32_t satnav = Load32(forza::GuestPtr(
+      base, table + 4 * Load32(forza::GuestPtr(base, 0x832FF054))));
+  if (!Plausible(roads) || !Plausible(satnav)) return false;
+  PPCContext saved = ctx;
+  ctx.r1.u64 = ctx.r1.u32 - 0x400;  // our frame below the hooked function's
+  uint32_t node = 0;
+  if (set) {
+    ctx.r3.u64 = roads;
+    ctx.v1.f32[3] = x;  // lvx byte-reverses the vector: x is the top lane
+    ctx.v1.f32[2] = y;
+    ctx.v1.f32[1] = z;
+    ctx.v1.f32[0] = 1.0f;
+    __imp__sub_82CDC5A0(ctx, base);
+    node = ctx.r3.u32;
+  }
+  if (!set || Plausible(node)) {
+    ctx.r1.u64 = saved.r1.u32 - 0x400;
+    ctx.r3.u64 = satnav;
+    ctx.r4.u64 = set ? node : 0;
+    __imp__sub_8299FB40(ctx, base);
+  }
+  ctx = saved;
+  REXLOG_INFO("CHALLENGE: GPS {} (road node {:08X})", set ? "route to the finish" : "cleared",
+              node);
+  return !set || Plausible(node);
+}
+
 // Client state. Game thread (frame, pad) and network thread (messages): one mutex.
 std::mutex mutex;
 enum class State { kIdle, kWaiting, kPrompt, kRacing };
 State state = State::kIdle;
 uint32_t challenge_id = 0;
 std::string opponent, destination;
-float finish_x = 0, finish_z = 0, finish_radius = 0;
+float finish_x = 0, finish_y = 0, finish_z = 0, finish_radius = 0;
+// The game's GPS (sat nav) route to the finish: set on START, cleared at the end, both on
+// the game thread (WorldChallengeFrame).
+enum class Gps { kNone, kSet, kShown, kClear };
+Gps gps = Gps::kNone;
 int64_t deadline = 0;      // prompt: answer by; waiting: give up at; racing: the start time
 bool finished = false;
 int64_t last_frame = 0;    // the last frame of the world's free roam
@@ -213,6 +262,7 @@ void RaceHud(int64_t now) {
 void LeaveWorld() {
   if (!in_world) return;
   in_world = false;
+  if (gps != Gps::kNone) gps = Gps::kNone;  // a new free roam has a new sat nav
   Send({kLeft});
   if (state != State::kIdle) {
     state = State::kIdle;
@@ -279,6 +329,12 @@ void WorldChallengeFrame(PPCContext& ctx, uint8_t* base) {
       REXLOG_INFO("CHALLENGE: car at {:.1f} {:.1f} {:.1f} heading {:.2f} {:.2f} {:.1f} m/s",
                   pos[0], pos[1], pos[2], heading[0], heading[1], speed);
     }
+  }
+  if (gps == Gps::kSet) {
+    gps = SatNav(ctx, base, true, finish_x, finish_y, finish_z) ? Gps::kShown : Gps::kNone;
+  } else if (gps == Gps::kClear) {
+    SatNav(ctx, base, false, 0, 0, 0);
+    gps = Gps::kNone;
   }
   if (state == State::kRacing) {
     if (!finished && now >= deadline) {
@@ -405,13 +461,15 @@ void LiveChallenge(const uint8_t* p, size_t n) {
       return;
     }
     case kStart: {
-      if (n < 19) return;
+      if (n < 23) return;
       challenge_id = Load32(p + 1);
       deadline = now + Load16(p + 5);
       finish_x = LoadF(p + 7);
-      finish_z = LoadF(p + 11);
-      finish_radius = LoadF(p + 15);
-      size_t at = 19;
+      finish_y = LoadF(p + 11);
+      finish_z = LoadF(p + 15);
+      finish_radius = LoadF(p + 19);
+      gps = Gps::kSet;
+      size_t at = 23;
       opponent = text8(at);
       destination = text8(at);
       state = State::kRacing;
@@ -428,6 +486,7 @@ void LiveChallenge(const uint8_t* p, size_t n) {
       const uint8_t outcome = p[5];
       static const char* const kOutcome[] = {"", "YOU WIN", "YOU LOSE", "NO WINNER", kTitle};
       REXLOG_INFO("CHALLENGE {}: over, outcome {}", Load32(p + 1), outcome);
+      gps = gps == Gps::kShown ? Gps::kClear : Gps::kNone;
       state = State::kIdle;
       Show(outcome <= 4 ? kOutcome[outcome] : kTitle, text16(6), 6);
       return;

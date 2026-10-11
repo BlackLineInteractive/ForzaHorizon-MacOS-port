@@ -405,8 +405,40 @@ Code: `server/forza_world.py` (events, world state, the AI rule), `forza_live_se
 
 Not tested: a grid full of humans starting early (needs 8 players, or
 `--world-event-players 2` with two), the schedule (`--world-event-minutes`; its state
-machine was unit-tested in Python), a host migration during an event, a console leaving
-during a race while it runs CPU drivers, three or more consoles.
+machine was unit-tested in Python), three or more consoles.
+
+### Players leaving during an event (two consoles)
+
+A player "quits" by closing the game (the process exits at once, as with the window's
+close button: no goodbye to the session; the others' sessions drop it about 15-20 s
+later). Script `t10.sh` (B jumps into A's world, then steps such as `race:peer`,
+`lobby:host`, `free:peer`, `rejoin:gone`; the roles come from the game's host flag),
+each step checked on the console that stays: alive, back in the world's free roam, the
+world's host, and the world still advertised by the server under its name (status page
+`worlds`). No fix was needed; what the game does:
+
+- **The peer quits mid-race while it runs 3 of the 6 CPU drivers** (`race:peer`): the
+  host races on; about 15 s later the session removes the peer and its 3 CPU drivers
+  (`sub_825761E0`, "session removes ... cpu 1 local 0"), which come back to the host
+  (at the race's unload they are local on the host and are removed the local way with
+  its own 3). Results, lobby, the world's free roam, A still the host and advertised.
+- **The host quits mid-race** (`race:host`): the peer races on, becomes the game's host
+  (op 4 to the server: `worlds` names it), finishes, and goes back to the world as its
+  host.
+- **The host quits in the 30 s wait lobby** (`lobby:host`): 19 s later the peer's
+  session removes the host and the host's 6 CPU drivers; the peer becomes host, its AI
+  fill makes 7 new CPU drivers ("1 human(s) of 8: CPU drivers Easy"), the 30 s wait runs
+  again, and it races the event alone with them, then back to the world as its host.
+- **The peer quits in the wait lobby** (`lobby:peer`): the host launched before the
+  session had dropped the peer (it went 22 s later, during the load); the host raced
+  with its 6 CPU drivers and went back to the world.
+- **A player quits in the free roam 5 s after an event** (`free:peer`, `free:host`): the
+  other keeps driving in the world, as its host, still advertised.
+- After each, the one who quit started the game again, picked Horizon World, was placed
+  into the remaining player's world and jumped in (`rejoin`).
+
+Counts (clean / runs): see the table in "Tests" of phase 3's section below... (filled in
+as the runs come in).
 
 Test scripts (copy and adapt; paths are the last agent's scratchpad): `t7.sh` two
 players, B jumps into A's world, then N events in a row, each checked on both consoles
@@ -470,7 +502,8 @@ the text box at the top of the screen says "X: challenge the driver ahead". Pres
 That player gets "DriverA challenges you to a race / X accept B decline (10)" and has 10 s
 to answer; a decline or no answer is reported back to the challenger ("DriverB declined
 your challenge", "DriverB didn't answer your challenge"). On accept both get "vs DriverB:
-race to the Wind Farm", a 3 s countdown, then GO and the distance and direction to the
+race to the Wind Farm", the game's GPS route to it on the minimap (the green line, as
+for a map waypoint), a 3 s countdown, then GO and the distance and direction to the
 finish ("2.2 km, ahead, left"); the first car within 40 m of it wins ("YOU WIN: You beat
 DriverB to the Wind Farm (2:31.4)" / "YOU LOSE"). Both just keep driving in the world.
 
@@ -522,6 +555,14 @@ session changes.
   unless the other leaves within 3 s (an event started in the world: called off). No
   winner after 10 minutes. The status page lists the `challenges` and every player's
   last `positions`.
+- **The GPS route** to the finish: done as `CSetSatNavDestinationPos` (`sub_829423B0`)
+  and the map's waypoint (`0x826E04E8`) do it: components = `*sub_825F6FB0()` =
+  `*(*(*(0x832DF024) + 4) + 0x4C)`, node = `sub_82CDC5A0(components[*(0x832FF090)],
+  position in v1)` (the road network's node for a position; v1 holds x, y, z, 1, which
+  `lvx` byte-reverses: x is lane 3 of the host register), then
+  `sub_8299FB40(components[*(0x832FF054)], node)` (the sat nav's destination; node 0
+  clears it). Set on the game thread when START arrives (the destinations carry their
+  height for the node search), cleared at the end.
 - **The text box** (`src/platform/hud_overlay.cpp`): an ImGui window drawn by the SDK's
   drawer over the game, registered only while it shows (like the achievement toasts).
   It is drawn on the window, not into the game's frame, so `tools/live_shot.sh`
@@ -544,8 +585,11 @@ Server with `--challenge-range 3000 --challenge-any-direction` (the two cars sta
    and (`--challenge-test-finish 5 --challenge-finish-radius 15`: A at the finish at GO)
    A "YOU WIN: You beat DriverB to the test finish", B "YOU LOSE: DriverA got to the test
    finish first", both still in the world (2 players, free roam).
-4. B challenged, A accepted, then B's game was closed mid-race: 15 s later A "YOU WIN:
-   DriverB left: you win the head-to-head" (earlier run, finish 120 m away).
+4. B challenged, A accepted (no test finish): "race to the Wind Farm (-1768, -2248), 2277
+   m", both minimaps showed the green GPS route ("road node 43103DA0"); then B's game was
+   closed mid-race: 15 s later A "YOU WIN: DriverB left: you win the head-to-head" and
+   A's GPS route was cleared (`screenshots/2026-10-11_h2h_01_gps_route_minimaps.jpg`:
+   A's and B's minimaps during the race, A's after it).
 
 Seen on the way: in free roam X opens the LEADERBOARDS screen (B's screen during test 3
 of the first run), hence X is taken from the game only with a car ahead.
@@ -558,9 +602,6 @@ of the first run), hence X is taken from the game only with a car ahead.
   left/right words assume x is right of z (left-handed, y up), unchecked.
 - The "behind" rule ran only in the server's unit test and the client's own check; the
   tests used `--challenge-any-direction` with a range of 3 km.
-- No GPS route to the finish: the game's GPS destination (`ForzaGPSSetDestinationEntry`
-  is a SmartGlass message that sets it; `IDS_SetWaypoint` is the map's action) is the
-  next thing to reach, so the route shows on the minimap.
 - The text box is ImGui, not the game's HUD; the game has a challenge alert of its own
   (`IDS_RivalsAlerts_Challenge_MsgTitle/MsgBody/HudPopup`) that could carry it.
 - A world event starting during a race calls it off (both send LEFT); untested.
