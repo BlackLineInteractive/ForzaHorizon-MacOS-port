@@ -25,6 +25,7 @@ import struct
 import time
 import urllib.parse
 
+import forza_challenge as challenge
 import forza_live_lsp as lsp
 import forza_world as world
 
@@ -35,6 +36,7 @@ VERSION = 1
  PRESENCE, INVITE) = range(1, 15)
 MATCH_PUBLISH, MATCH_SEARCH, MATCH_RESULTS = 15, 16, 17  # matchmaking sessions
 WORLD_EVENT = 18  # server -> a Horizon World's host: end the free roam for an event
+CHALLENGE = challenge.KIND  # 19: head-to-head challenges in the world (forza_challenge.py)
 MAX_MATCH_RECORD = 1300
 SESSION_INFO_SIZE = 0x3C  # XSESSION_INFO: session id, host XNADDR, key-exchange key
 MAX_PRESENCE_EXTRA = 1024
@@ -101,6 +103,8 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.relayed_packets = 0
         self.http_port = 0  # TCP port of the title servers, told to clients; 0 = none
         self.dropped_packets = 0  # over a player's rate limit
+        self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
+                                               lambda pid: getattr(self.peers.get(pid), "name", None))
 
     def connection_made(self, transport):
         self.transport = transport
@@ -140,6 +144,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                 self.drop(peer, "left")
             elif kind in (MATCH_PUBLISH, MATCH_SEARCH):
                 self.on_match(peer, kind, body)
+            elif kind == CHALLENGE and body:
+                self.challenges.on_message(peer.id, body)
         except (struct.error, IndexError, UnicodeDecodeError) as e:
             log.debug("bad packet from %s: %s", addr, e)
 
@@ -433,7 +439,26 @@ class ForzaLive(asyncio.DatagramProtocol):
                                "event": world.WORLDS.request(sid, event_id)[0]} for sid in sids],
                 "worlds": [sid.hex() for sid in worlds]}
 
+    # --- head-to-head challenges (forza_challenge.py) ---
+
+    def challenge_send(self, peer_id, body):
+        peer = self.peers.get(peer_id)
+        if peer is not None:
+            self.send(peer.addr, CHALLENGE, body)
+
+    def world_of_peer(self, peer_id):
+        """The Horizon World session id the player is in (its hosted or joined session), or
+        None."""
+        p = self.peers.get(peer_id)
+        if p is None:
+            return None
+        for record in (getattr(p, "match", None), getattr(p, "standby", None)):
+            if record and record[0] == lsp.WORLD_HOPPER:
+                return bytes(record[1][:8])
+        return None
+
     def drop(self, peer, why):
+        self.challenges.drop(peer.id)
         self.peers.pop(peer.id, None)
         if self.by_addr.get(peer.addr) is peer:
             del self.by_addr[peer.addr]
@@ -460,7 +485,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                   for sid, (host, humans) in self.world_sessions().items()}
         return {"server": "forza-live", "protocol": VERSION, "uptime": int(time.time() - self.started),
                 "players": len(self.peers), "relayed_packets": self.relayed_packets,
-                "dropped_packets": self.dropped_packets, "rooms": rooms, "worlds": worlds}
+                "dropped_packets": self.dropped_packets, "rooms": rooms, "worlds": worlds,
+                **self.challenges.status()}
 
 
 async def read_request(reader):
@@ -540,11 +566,13 @@ async def main():
     parser.add_argument("-v", "--verbose", action="store_true")
     lsp.add_arguments(parser)
     world.add_arguments(parser)
+    challenge.add_arguments(parser)
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(message)s")
     lsp.configure(args)
     world.configure(args)
+    challenge.configure(args)
     set_rate_limit(args.rate_limit)
 
     loop = asyncio.get_running_loop()
@@ -560,6 +588,7 @@ async def main():
         while True:
             await asyncio.sleep(1)
             ticks += 1
+            server.challenges.tick()
             if ticks % 2 == 0:
                 server.world_tick()
             if ticks % 5 == 0:

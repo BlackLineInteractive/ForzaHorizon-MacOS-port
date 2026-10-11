@@ -6,6 +6,7 @@
 
 #include "debug/frame_stats.h"
 #include "platform/achievement_toast.h"
+#include "platform/hud_overlay.h"
 #include "platform/vulkan_hooks.h"
 
 #include <string>
@@ -61,7 +62,11 @@ class ForzaApp : public rex::ReXApp {
 
   // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
   // calls (swapchain present-mode log, RECOMP_PERF timing; src/platform/vulkan_hooks.h).
-  void OnCreateDialogs(rex::ui::ImGuiDrawer*) override { forza::InstallVulkanHooks(graphics_); }
+  // Also the text box of the Horizon World's head-to-head challenges (platform/hud_overlay.h).
+  void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+    forza::InstallVulkanHooks(graphics_);
+    forza::InstallHud(drawer, app_context());
+  }
 
   void OnPostSetup() override { forza::InstallVulkanHooks(runtime()->graphics_system()); }
 

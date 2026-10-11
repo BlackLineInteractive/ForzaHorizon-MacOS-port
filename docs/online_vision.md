@@ -463,59 +463,107 @@ with it the number of CPU drivers.)
   the host out of its own session. CPU drivers are never kicked now, and they are set in
   game (4) when the host's player is (hook on `sub_8286A468`).
 
-## Next phases (designs)
+## Phase 3 (built): head-to-head challenges in the world
 
-### Phase 3: head-to-head challenges
+**How to play:** in the Horizon World's free roam, drive up right behind another player:
+the text box at the top of the screen says "X: challenge the driver ahead". Press **X**.
+That player gets "DriverA challenges you to a race / X accept B decline (10)" and has 10 s
+to answer; a decline or no answer is reported back to the challenger ("DriverB declined
+your challenge", "DriverB didn't answer your challenge"). On accept both get "vs DriverB:
+race to the Wind Farm", a 3 s countdown, then GO and the distance and direction to the
+finish ("2.2 km, ahead, left"); the first car within 40 m of it wins ("YOU WIN: You beat
+DriverB to the Wind Farm (2:31.4)" / "YOU LOSE"). Both just keep driving in the world.
 
-- Trigger: the client watches the X button in free roam (`input_autopress.cpp` already
-  sees the pad) and the distance to the other players' cars (their positions are in the
-  replicated car state; to find in memory). Pressed within a few car lengths behind
-  another player: a `CHALLENGE` message to the server (like `INVITE`: target XUID, our
-  position), delivered to that player's client.
-- Accept or reject: a prompt in the challenged player's game. The game has the pieces:
-  the Rivals challenge alert (`IDS_RivalsAlerts_Challenge_MsgTitle/MsgBody/HudPopup`) and
-  the XAM message box (`XamShowMessageBoxUI`; what the SDK shows for it is to check). A timeout (10 s)
-  or a reject goes back to the challenger as a HUD message.
-- The race: the game's free-roam challenges include point-to-point ones
-  (`DriveFromAToBFreeRoamChallenge` in `FreeRoamChallenges.xml`: start and end
-  coordinates with radii), run inside online free roam without leaving the world, but
-  started by the host and for everyone. A head-to-head would generate such an A-to-B
-  route from the two cars' position (end point a few km along the road network) and run
-  it for the two players only; or, simpler and closer to the existing code, move the two
-  into a 2-player point-to-point round (a playlist of their own on the server, track
-  from the closest `Tracks` route) and back into the world afterwards.
-- Single-player head-to-heads to trace for this: `StreetRace`, `CStreetRaceHubState`, the
-  road-driver challenges (proximity check, button prompt), `IDS_NoChallengeHost` /
-  `IDS_NoChallengeClient` (online free roam's host-only challenges).
+**The route chosen:** the race runs **inside the free roam**, by our code and the server,
+not through the game's race machinery. Both alternatives of the design notes disturb the
+world: the online free roam's co-op challenges (`DriveFromAToBFreeRoamChallenge` in
+`FreeRoamChallenges.xml`) are started by the session host for everyone in the session,
+and a separate 2-player point-to-point round means leaving the world session and making
+a new one (menus, matchmaking, the way back). An in-world race needs only each car's
+position, so the other players in the world see nothing of it, and nothing in the
+session changes.
 
-## Backlog: player-to-player head-to-head challenges
+### How it works
 
-After the game runs smoothly without crashes and the shared-world server puts everyone
-in the same world (not before):
+- **The cars** (`src/hooks/world_challenge.cpp`): the code of
+  `CStoreRestorePlayerCarPosition` (`sub_82983A90`) reads the player's car as root =
+  `*(0x832DF024)`, list = `*(*(root + 4) + 4)`, the list's vehicles a vector at
+  `+0x80`/`+0x84`, car = `*(vehicle + 0x2D90)`, position = the car's vfunc 0x13C, which
+  returns the vector at `car - 0xA20` (x, y, z; y up). The list holds every car on the
+  console with its kind at `vehicle + 0x2DD0`: 0 this console's player, 1 a CPU driver it
+  runs, 2 another console's player, 3 another console's CPU driver (a race with two
+  consoles: A's 0/1/1/1/2/3/3/3 is B's 2/3/3/3/0/1/1/1, the same positions on both). The
+  car's forward vector is at `car - 0xA40` (it matched the direction the car had moved
+  in), its up vector at `car - 0xA50`. All plain memory reads, no guest calls.
+- **Every frame of the world's free roam** (from the `sub_825ADB30` hook in
+  `world_events.cpp`, on every peer): the client reads its own car and the other
+  players' cars, sends its position, heading and speed to the server 4 times a second
+  (`CHALLENGE` op POS), and shows the hint when another player's car is within the
+  server's range and ahead (dot of our heading with the direction to it >= 0.5).
+- **The pad** (`XamInputGetState` in `input_autopress.cpp` calls `WorldChallengePad`):
+  X with a car ahead sends REQUEST and is kept from the game; without one the game gets
+  X (in free roam X opens the LEADERBOARDS screen). While a prompt shows, X accepts and B
+  declines, and both are kept from the game.
+- **The server** (`server/forza_challenge.py`, message `CHALLENGE` = UDP kind 19, ops in
+  the module's docstring) decides: on REQUEST the closest player in the same world (the
+  session id of its hosted or joined Horizon World session) within `--challenge-range`
+  (40 m) and ahead of the challenger; PROMPT to it; ANSWER, or no answer after 10 s; on
+  accept START to both with the destination: the landmark whose distance from the two
+  cars' midpoint is closest to 2.5 km (1.2-5 km preferred), from the endpoints of the
+  game's own A-to-B free roam challenges (Carson Warehouses, Red Foot Ranch, Red Rock
+  Outpost, Finley Dam, KH Outpost, the Steelworks, the Bunker, the Media Centre, the
+  Lakeside Diner, the Carson fountain, the Wind Farm, the Beaumont cable car station,
+  Beaumont Outpost; world x/z from `FreeRoamChallenges.xml`, in
+  `media/gametunablesettings.zip` with zip method 21: `tools/unzip21.py` extracts it,
+  with `tools/unxmem.c` built against the SDK's libmspack). Each
+  client checks its own car against the finish after GO and sends FINISH; the first
+  one wins (END to both). A racer who quits (no positions for 15 s, or gone from the
+  server) loses by forfeit; one who leaves the free roam (LEFT: an event, the menu) too,
+  unless the other leaves within 3 s (an event started in the world: called off). No
+  winner after 10 minutes. The status page lists the `challenges` and every player's
+  last `positions`.
+- **The text box** (`src/platform/hud_overlay.cpp`): an ImGui window drawn by the SDK's
+  drawer over the game, registered only while it shows (like the achievement toasts).
+  It is drawn on the window, not into the game's frame, so `tools/live_shot.sh`
+  screenshots don't show it; every message is logged (`HUD: title | text`).
+- Settings: client cvar `world_challenges` (on); server `--challenge-range M`, tests:
+  `--challenge-any-direction`, `--challenge-test-finish M` (the finish M ahead of the
+  challenged car instead of a landmark), `--challenge-finish-radius M`.
+  `FORZA_CHALLENGE_TRACE=1` logs the car position every 5 s and the race's text box every
+  3 s.
 
-- In single player, Forza Horizon lets you drive up behind certain road drivers and
-  press a button to challenge them to a quick race along a route. Online, the same
-  should work between players.
-- In the shared world, a player drives up behind another player's car and presses X:
-  that sends a challenge request. It is not instant: the challenged player gets a prompt
-  and can accept or reject, with a timeout when there is no answer.
-- If accepted, a route is set up from where they are, like the single-player
-  head-to-head, and the race starts for both. A reject or a timeout is reported back to
-  the challenger.
+### Tests (two consoles, B jumped into A's world; script `t11.sh`)
 
-To note while reversing: how the single-player head-to-head is triggered (the
-proximity/behind check, the button prompt), how its route is generated or picked,
-whether the original online free roam had any player-vs-player challenge, and which UI
-prompts (accept/reject dialogs) the game already has that could be reused.
+Server with `--challenge-range 3000 --challenge-any-direction` (the two cars start about
+100 m apart at the festival):
 
-Found so far (strings in `default.xex`, not yet traced to code): street races
-(`StreetRace`, `CStreetRaceHubState`, `streetracehub1..3_unlock`), the Rivals system
-(`CShowBeatRival`, `CWaitForBeatRival`, `CIsCorrectRivalData`, `RivalsBeaten`,
-`IDS_RivalsAlerts_Challenge_MsgTitle/MsgBody/ListEntry/HudPopup`: a challenge arriving as
-an alert with a message, a list entry and a HUD popup, a reusable pattern), free-roam
-challenges (`CFreeRoamChallengeState`, `IDS_ChallengeAvailable`, `IDS_EndChallenge`,
-`IDS_SetHighlightedChallenge`) and, for online free roam, `IDS_NoChallengeHost` /
-`IDS_NoChallengeClient`: the original online free roam had host-started challenges.
+1. A pressed X: B got the prompt; B pressed B: A "DriverB declined your challenge", B
+   "Challenge declined".
+2. A pressed X, B didn't answer: after 10 s both "challenge expired" / "didn't answer".
+3. B pressed X, A accepted with X: both "vs ...: race to the test finish", the countdown,
+   and (`--challenge-test-finish 5 --challenge-finish-radius 15`: A at the finish at GO)
+   A "YOU WIN: You beat DriverB to the test finish", B "YOU LOSE: DriverA got to the test
+   finish first", both still in the world (2 players, free roam).
+4. B challenged, A accepted, then B's game was closed mid-race: 15 s later A "YOU WIN:
+   DriverB left: you win the head-to-head" (earlier run, finish 120 m away).
+
+Seen on the way: in free roam X opens the LEADERBOARDS screen (B's screen during test 3
+of the first run), hence X is taken from the game only with a car ahead.
+
+### Open
+
+- Not tested with real driving to a landmark: scripted driving goes straight and hits
+  the festival's barriers (in the first run A was stuck against the grandstand). The
+  distance and direction text updates every 0.2 s from the same position; the
+  left/right words assume x is right of z (left-handed, y up), unchecked.
+- The "behind" rule ran only in the server's unit test and the client's own check; the
+  tests used `--challenge-any-direction` with a range of 3 km.
+- No GPS route to the finish: the game's GPS destination (`ForzaGPSSetDestinationEntry`
+  is a SmartGlass message that sets it; `IDS_SetWaypoint` is the map's action) is the
+  next thing to reach, so the route shows on the minimap.
+- The text box is ImGui, not the game's HUD; the game has a challenge alert of its own
+  (`IDS_RivalsAlerts_Challenge_MsgTitle/MsgBody/HudPopup`) that could carry it.
+- A world event starting during a race calls it off (both send LEFT); untested.
 
 ## Likely building blocks
 

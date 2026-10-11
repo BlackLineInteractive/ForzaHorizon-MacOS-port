@@ -76,6 +76,7 @@ set(FORZA_SOURCES
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
     src/hooks/physics_loader_check.cpp
+    src/hooks/world_challenge.cpp
     src/hooks/world_drop_in.cpp
     src/hooks/world_events.cpp
     src/kernel/critical_section.cpp
@@ -94,6 +95,7 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/hud_overlay.cpp
     src/platform/sdk_import.cpp
     src/platform/socket.cpp
     src/platform/vulkan_hooks.cpp

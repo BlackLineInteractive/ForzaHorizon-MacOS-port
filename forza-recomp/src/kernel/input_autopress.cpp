@@ -51,6 +51,10 @@
 
 using forza::GuestPtr;
 
+namespace forza {
+uint16_t WorldChallengePad(uint16_t buttons);  // hooks/world_challenge.cpp
+}
+
 namespace {
 
 using GuestFunc = void (*)(PPCContext&, uint8_t*);
@@ -350,6 +354,9 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
     ctx.r3.u64 = kErrorDeviceNotConnected;
     return;
   }
+  // Head-to-head challenges (hooks/world_challenge.cpp) watch player 1's X and B and hide
+  // them from the game while a prompt asks for them.
+  if (user == 0) state.buttons &= uint16_t(~forza::WorldChallengePad(state.buttons));
   if (buffer) {
     // The packet number changes whenever the state does.
     static std::mutex packet_mutex;

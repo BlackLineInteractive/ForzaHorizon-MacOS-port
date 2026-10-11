@@ -197,6 +197,10 @@ namespace rex::runtime {
 PPCFunc* ResolveIndirectFunction(uint32_t guest_address);
 }
 
+namespace forza {
+void WorldChallengeFrame(PPCContext& ctx, uint8_t* base);  // world_challenge.cpp
+}
+
 namespace {
 // Calls the guest virtual method at `offset` of `object` (r3 = object, r4 = arg); r3.
 uint32_t CallVirtual(PPCContext& ctx, uint8_t* base, uint32_t object, uint32_t offset,
@@ -448,6 +452,9 @@ extern "C" REX_FUNC(sub_82880A90) {
 // every peer ("yes" once the host's status is 5). On the world's host it takes the event
 // the server asked for.
 extern "C" REX_FUNC(sub_825ADB30) {
+  if (const uint32_t world = WorldPlaylistGame(base)) {
+    if (forza::GuestPtr(base, world)[kOptions] == kPresetFreeRoam) forza::WorldChallengeFrame(ctx, base);
+  }
   const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0;
   if (game) {
     uint8_t* g = forza::GuestPtr(base, game);

@@ -70,6 +70,11 @@ void LiveMatchTick();
 // (hooks/world_events.cpp takes it).
 void LiveWorldEvent(const uint8_t* body, size_t size);
 
+// Head-to-head challenges (hooks/world_challenge.cpp, server/forza_challenge.py): send a
+// CHALLENGE message to the server; the network thread hands the server's to LiveChallenge.
+void LiveSendChallenge(const std::vector<uint8_t>& body);
+void LiveChallenge(const uint8_t* body, size_t size);
+
 // The online game's "this console hosts the session" flag: 1, 0, or -1 without an online
 // game (hooks/world_drop_in.cpp).
 int OnlineGameIsHost();
