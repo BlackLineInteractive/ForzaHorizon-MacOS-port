@@ -487,6 +487,12 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
   - `tools/ghidra_decomp.sh` keeps a headless Ghidra running on `ghidra_projects/ForzaHorizon`
     and decompiles functions on request (it repairs the no-return `__savegprlr` helpers
     that cut the import's functions short).
+- 2026-10-11: **SDK patches 0034 and 0035 (shared with RecompiledHaloReach).** 0034 makes the
+  SDK's GLSL tessellation shaders read the system constants from set 1. They read them from
+  the shared memory buffer, which gave them garbage factors and index bounds. 0035 draws
+  tessellated triangle strips and fans as lists (Halo: Reach's cinematic faces). Forza issues
+  no such draws. Free roam was smoke-tested with both: it boots, renders and drives at 30 fps.
+  Details: RecompiledHaloReach `docs/rendering.md`.
 
 ## Debugging recipes
 
