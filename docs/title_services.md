@@ -539,6 +539,18 @@ two consoles into Playground Games; `seed.py`: a score from a fake player, optio
 a ghost; `ut_*.py`: in-process unit tests of the services) are in the agent scratchpad's
 `forza-svc/`.
 
+## State and next steps (Message Center work, 2026-10-11)
+
+Done and tested in the game: notifications (format, categories, poll timing), operator
+gifts (credits and a stock car collected), club invitation and join request with two
+consoles, Monthly Rivals listing and loading a trial. Not finished: the two-console test
+of RIVAL CHALLENGE from a real `NotifyRival` (the server side is unit-tested; the plan
+was B beating A on board 199 with A's score set to 200 s in `DATA_DIR/scoreboards.json`,
+B driving `tools/autodrive.py b 240` with `AD_PATH_LOAD=forza-svc/millennia_path.txt`).
+Session scripts: `solo2.sh` (`START="a b"` for two consoles, `SERVER_ARGS=...`),
+`ctl.sh`, `seed.py` / `seed_tt.py` (time trial scores), `ut_notify.py` (unit test of the
+notification flows), all in the agent scratchpad's `forza-svc/`.
+
 ## Not done
 
 - The other services (storefront, DLC metadata) get empty answers.
@@ -548,9 +560,9 @@ a ghost; `ut_*.py`: in-process unit tests of the services) are in the agent scra
   IN CAR, VIEW CAR, SHARE CAR (the club garage) and VIEW HISTORY, no GIFT CAR, so only the
   server's operator gifts (`/gift`) reach the Message Center; the `SendCarGift` path is
   server-side and unit-tested only.
-- Notifications: auction ones are listed without text (no Auction House); the Message
-  Center's first poll comes 15 s after the sign-in, and the ones fetched before a race
-  show again after the race's next poll.
+- Notifications: auction ones are listed without text (no Auction House). The Message
+  Center starts empty at each new session (a race loading starts one) until its first
+  poll, which the server asks for 15 s later (`StartNewSession`'s `nextRetrieveSeconds`).
 - Car clubs: creating one in the game (keyboard), club rankings, borrowing a shared car
   (`DownloadSharedCar`) were not tried.
 - Playground Games: a round of Cat & Mouse played to its end, and three or more

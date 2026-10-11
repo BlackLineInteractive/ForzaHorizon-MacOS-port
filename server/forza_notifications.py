@@ -236,9 +236,11 @@ def update(xuid, body, clear):
 
 def services():
     return {
+        # A new session (the game starts one when a race loads) shows nothing until its
+        # first poll: make that one come soon.
         ("Xls.Notifications", "StartNewSession"):
             lambda xuid, body: x.reply(x.NotificationsStartNewSession_Results,
-                                       {"nonce": 1, "nextRetrieveSeconds": POLL_SECONDS}),
+                                       {"nonce": 1, "nextRetrieveSeconds": FIRST_POLL_SECONDS}),
         ("Xls.Notifications", "RetrieveForUser"): retrieve,
         ("Xls.Notifications", "MarkRead"): lambda xuid, body: update(xuid, body, False),
         ("Xls.Notifications", "Clear"): lambda xuid, body: update(xuid, body, True),
