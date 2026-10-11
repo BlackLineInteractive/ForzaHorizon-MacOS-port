@@ -305,6 +305,14 @@ Cr, B's balance 630,931 -> 638,371). With a real player as the rival the game do
 NotifyRival; the server logs it (delivering it to the rival as a Message Center
 "beat you in the ... Rival Challenge" notification needs the notification format, below).
 
+After both runs the Millennia Masters board (Race Central, Gold Wristband) showed "1
+DriverB R3 797 LP700-4 01:33.294" and "2 [HZN] DriverA R3 797 LP700-4 01:47.228" with
+their assists, "YOU ARE IN THE TOP 100% OF 2 PLAYERS" (the club tag comes from the car
+club, below). ONLINE XP is `GetRows(type 4, board 1, view 5 "Friends & Club")`: the
+server ranks every player by the online XP kept from `UpdateAll` ("1 DriverB 2,600 XP, 2
+[HZN] DriverA 1,980 XP"; screenshots `2026-10-11_leaderboard_0*.jpg`). The end-of-game
+`SubmitScore(type 4, board -1)` is the XP of that game.
+
 Race Central (at the festival; the map's X fast-travels there) has LEADERBOARDS: Festival
 Events (VIEW OVERALL and the seven wristbands' event lists), Street Races, Showcase
 Events and Online XP. VIEW OVERALL is `GetRollupRows(type 0, view, pivot -1, eventTypeId
@@ -316,6 +324,28 @@ a time. A on a row offers SHOW GAMER CARD and ADD AS FAVORITE (`Storefront.
 AddFavoriteUser`, `GetStorefrontFavorites`; empty answers). Race Central's RIVALS has
 Monthly Rivals (`GetTimeTrials(7, 150)`: the server's time trials, none yet) and the
 career events' Rivals.
+
+### Car clubs and the club garage (`server/forza_clubs.py`)
+
+At the festival the CAR CLUB sign (X) calls `Xls User.GetUserData`: with no club the menu
+is MY CLUB (CREATE, JOIN CLUB). JOIN CLUB is `Xls Clan.GetUsersToJoin(filter 1, 8)`: the
+server lists each club by its leader ("[HZN] Seeded Rival" with a leader icon); A on it:
+REQUEST TO JOIN CLUB (`RequestJoiningClanByName("HZN")`; an open club takes the player at
+once, a closed one keeps the request for a leader's `ApproveRequestToJoin`), SHOW GAMER
+CARD, ADD AS FAVORITE. The game said "Request sent successfully" and showed the club the
+next time the sign was entered (`GetUserData` with clanId, then `GetClanMembers`,
+`CarClub.GetClanDetails`): "HZN Horizon Kings" with CLUB LEADERBOARD (members), CLUB
+RANKINGS, CLUB GARAGE, CLUB INFO, QUIT CLUB, CLUB TOTAL 2. CLUB GARAGE (`SharedCar.
+GetClubCars`) offers SHARE CAR: picking a car and YES sends `UploadCarTextures` (the
+livery thumbnail, 98,793 bytes) and `SharedCar.Create` (the car's data and tuning), "Your
+car has been successfully uploaded", and the garage then lists it (`GetCarDetails` for
+its thumbnail): "2012 Lamborghini R3 797, OWNER DriverA, SHARED DATE, LAST USED DATE,
+NUMBER OF RACES 0" (`screenshots/2026-10-11_club_0*.jpg`). Roles as the game labels
+them (`sub_8282A260`): 1 leader, 2 co-leader, 3 member. CREATE asks for the tag and name
+with the on-screen keyboard (not driven in these tests; the club used here was created on
+the server). Invitations and accepted requests reach the other player through the
+Message Center, which does not work yet; they see the club when they next enter the
+sign.
 
 ### The Auction House and car gifts (`server/forza_market.py`)
 
@@ -389,11 +419,13 @@ empty. The server sends no notifications by default.
 
 ## Not done
 
-- The other services (storefront, car clubs, shared cars, notification contents, the
-  Rivals menu's monthly time trials) get empty answers.
+- The other services (storefront, notification contents, the Rivals menu's monthly time
+  trials) get empty answers.
 - Scoreboards: the "beaten your time" notification to the rival (NotifyRival arrives; the
-  Message Center format is unknown), the ONLINE XP leaderboard; the Monthly Rivals screen
-  does not load with the server's time trials (`--time-trials`).
+  Message Center format is unknown); the Monthly Rivals screen does not load with the
+  server's time trials (`--time-trials`).
+- Car clubs: creating one in the game (keyboard), invitations, club rankings, borrowing a
+  shared car (`DownloadSharedCar`) were not tried.
 - Playground Games: a round of Cat & Mouse played to its end, and three or more
   consoles, were not tested.
 - `DLCMetadata.GetStringTableInfo` / `Content.DownloadContent` (DLC string tables and

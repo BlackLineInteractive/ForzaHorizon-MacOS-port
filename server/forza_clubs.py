@@ -512,7 +512,8 @@ def get_car_details(xuid, body):
     for car_id in p["carIds"]:
         c = cars.get(str(car_id))
         if c:
-            out.append({"sharedCarId": car_id, "thumbnail": b"",
+            thumb = read_blob("textures%d_thumb.bin" % c["texturesId"], 230400)
+            out.append({"sharedCarId": car_id, "thumbnail": thumb,
                         "manufacturerColorIndex": c["car"]["manufacturerColorIndex"],
                         "carColorRGB": c["car"]["carColorRGB"],
                         "isMetallic": c["car"]["isMetallic"],

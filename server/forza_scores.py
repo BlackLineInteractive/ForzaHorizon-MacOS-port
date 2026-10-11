@@ -209,9 +209,15 @@ def rows_view(entries, xuid, view, start_at, max_results):
     return rows, user_row
 
 
+ONLINE_XP_TYPE = 4  # Race Central's ONLINE XP: GetRows(type 4, board 1); SubmitScore type 4
+
+
 def get_rows(xuid, body):
     p, _ = x.decode(x.ScoreboardGetRows_Params, body)
-    entries, _ = STORE.ranked(p["gameScoreboardId"], p["isServerTimeTrial"])
+    if p["type"] == ONLINE_XP_TYPE:
+        entries = online_xp_entries()
+    else:
+        entries, _ = STORE.ranked(p["gameScoreboardId"], p["isServerTimeTrial"])
     rows, user_row = rows_view(entries, xuid, p["view"], p["startAt"], p["maxResults"])
     log.info("title: GetRows %016X board %d%s type %d view %d from %d max %d: %d of %d", xuid,
              p["gameScoreboardId"], " (time trial)" if p["isServerTimeTrial"] else "",
@@ -305,7 +311,7 @@ def get_rollup_rows(xuid, body):
     p, _ = x.decode(x.ScoreboardGetRollupRows_Params, body)
     if p["eventTypeId"] in EVENT_TYPES and p["type"] == 0:
         entries = rollup_entries(p["eventTypeId"], p["pivotId"])
-    else:  # not a race rollup: Race Central's ONLINE XP is the guess
+    else:
         entries = online_xp_entries()
     rows, user_row = rows_view(entries, xuid, p["view"], p["startAt"], p["maxResults"])
     log.info("title: GetRollupRows %016X type %d view %d pivot %d event type %d: %d rows", xuid,
