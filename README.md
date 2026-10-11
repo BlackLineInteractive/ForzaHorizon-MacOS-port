@@ -45,7 +45,7 @@ recompiled C++ is generated from your copy on your machine and never committed h
 | Audio | The game produces sound (measured, not listened to yet) |
 | Saves | Saved and loaded; Xenia saves load with `profile_xuid` set to the Xenia profile's XUID |
 | DLC | All 23 packages install with `tools/install_dlc.py` and are mounted by the game |
-| Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold; Turn 10's title services for sign-in, playlists and online XP; two players find each other with Find Game and race, the race awards XP and credits; parties (Invite Friends), Create Custom Game, online free roam; a shared world: the Horizon World playlist places everyone into the same free roam automatically. Storefront, auctions, gifting and scoreboards answer empty |
+| Xbox LIVE | Emulated by a Forza Live server (`server/`): signed in, Gold; Turn 10's title services for sign-in, playlists and online XP; two players find each other with Find Game and race, the race awards XP and credits; parties (Invite Friends), Create Custom Game, online free roam; a shared world: the Horizon World playlist places everyone into the same free roam automatically; the Playground Games playlist (Infected, Cat & Mouse, King); leaderboards and Rivals (times, ghosts and bounties shared between players). The Auction House and gifting are on the server but the game shows no way into them; storefront, car clubs and Message Center notifications answer empty |
 | Windows | Cross-compiled from Linux (`tools/build_windows.sh`), tested under Proton; not yet on Windows itself |
 
 ## Requirements
@@ -146,7 +146,10 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   after the intermission once two players are in. The server also stands in for Turn 10's
   title services ("the Horizon server", `docs/title_services.md`): the playlists, the
   rounds' tracks, and online XP, which it keeps per player (`players/` in its data
-  directory) and gives back at every sign-in; credits stay in your save.
+  directory) and gives back at every sign-in; credits stay in your save. It also keeps
+  every player's best lap on each event with its ghost (`scoreboards.json`, `ghosts/`):
+  Race Central's LEADERBOARDS show them, and X RIVALS on an event's ticket races you
+  against another player's ghost for a bounty.
 - **Frame rate:** `frame_rate = 60` in `forza.toml` (or `tools/play.sh --frame_rate=60`)
   runs the game at 60 fps instead of the console's 30. The game times its physics and
   clocks in real time, so they keep their speed. Free roam runs 59 fps; a race with 7 AI
