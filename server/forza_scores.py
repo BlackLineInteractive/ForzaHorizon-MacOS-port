@@ -392,18 +392,21 @@ def notify_rival(xuid, body):
 # Race Central's MONTHLY RIVALS: the server's time trials (GetTimeTrials). Each one is a
 # scoreboard of its own (isServerTimeTrial, board = the trial id) and a round of
 # TIME_TRIAL_HOPPER (Hopper.GetGameOptions(hopper, gameOptionsIndex): its track and laps).
-# Categories (TimeTrial.str): 0 time, 1 time with traffic, 2 drift, 3 Top Gear, 4 time
-# spec, 5 weekly, 6 autocross.
+# Categories (TimeTrial.str names FM4's: 0 time, 1 time with traffic, 2 drift, 3 Top Gear,
+# 4 time spec, 5 weekly, 6 autocross): the MONTHLY RIVALS screen shows category 4 only
+# (its CTimeTrialDataSource filters by the category at +0x20, which that screen sets to 4).
+# With the trials in category 0 the screen had nothing to show and kept its YOUR RIVAL,
+# BOUNTY and description spinners going.
 TIME_TRIAL_HOPPER = 10
-# Off by default (--time-trials): with these two the game's MONTHLY RIVALS screen asked for
-# nothing more and kept its YOUR RIVAL, BOUNTY and description spinners going.
-TIME_TRIALS_ENABLED = False
+MONTHLY_CATEGORY = 4
+TIME_TRIALS_ENABLED = False  # --time-trials
 TIME_TRIALS = [
     # id, category, name, description, track id, track name, laps, car class (-1 any)
-    (1001, 0, "Horizon Monthly: Clear Springs", "Two laps of the Clear Springs Circuit, "
-     "any car. Beat the other players' times.", 156, "Clear Springs Circuit", 2, -1),
-    (1002, 0, "Horizon Monthly: Festival Sprint", "One lap on the festival's road course "
-     "in a class A car.", 322, "Festival Circuit", 1, 5),
+    (1001, MONTHLY_CATEGORY, "Horizon Monthly: Clear Springs", "Two laps of the Clear "
+     "Springs Circuit, any car. Beat the other players' times.", 156,
+     "Clear Springs Circuit", 2, -1),
+    (1002, MONTHLY_CATEGORY, "Horizon Monthly: Festival Sprint", "One lap on the "
+     "festival's road course in a class A car.", 322, "Festival Circuit", 1, 5),
 ]
 
 

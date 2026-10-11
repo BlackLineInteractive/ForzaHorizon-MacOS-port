@@ -322,8 +322,25 @@ event's board showed "1 Seeded Rival, S 686 Gallardo LP570, 03:55.000" with ABS/
 columns and "YOU'RE NOT ON THE LEADERBOARD"; the overall board showed the rollup score as
 a time. A on a row offers SHOW GAMER CARD and ADD AS FAVORITE (`Storefront.
 AddFavoriteUser`, `GetStorefrontFavorites`; empty answers). Race Central's RIVALS has
-Monthly Rivals (`GetTimeTrials(7, 150)`: the server's time trials, none yet) and the
-career events' Rivals.
+MONTHLY RIVALS and the career events' Rivals.
+
+**Monthly Rivals** (`--time-trials`). Entering RIVALS (`ForzaUI::CTimeTrialTypeSelect`,
+`sub_827AD130`) calls `GetTimeTrials(7, 150)`; the game keeps the answer in a
+`Forza::CTimeTrialDataSource` (vtable `0x82072694`): the trials (count +0x28), the
+categories `{category, startIndex}` (count +0x48D08, entries from +0x48D0C, at most 8) and
+a selected category at +0x20, by which its count (`sub_8283EA58`) and items
+(`sub_8283F208`) are filtered. The MONTHLY RIVALS screen selects **category 4** (read
+from the running game). The server's trials used to be in category 0, so the screen had
+none and kept its YOUR RIVAL, BOUNTY and description spinners going; in category 4 it
+lists them (name, description, route type CIRCUIT RACE, surface ASPHALT, the track's
+picture) and asks `GetRivalAndPersonalBest(board = the trial id, isServerTimeTrial)` for
+the selected one. The rival is a score on that board (`seed.py` with `isServerTimeTrial`
+gave "[HZN] SEEDED RIVAL 04:00.500, BOUNTY 5,000 Cr"; without one the spinners stay). A
+on a trial: `CTimeTrialRivals::DownloadTimeTrial` (`sub_827D1E40`) calls
+`Hopper.GetGameOptions(hopperId, gameOptionsIndex, 0x8000)` (the server's
+`TIME_TRIAL_HOPPER` rounds), then GARAGE SELECT (my garage or the club garage), CAR
+SELECT, and the time trial loads (`GetBestScores(1001, ...)`, START RIVALS, the HUD's LAP
+and TARGET 04:00.500 on track 156).
 
 ### Car clubs and the club garage (`server/forza_clubs.py`)
 
@@ -524,13 +541,18 @@ a ghost; `ut_*.py`: in-process unit tests of the services) are in the agent scra
 
 ## Not done
 
-- The other services (storefront, notification contents, the Rivals menu's monthly time
-  trials) get empty answers.
-- Scoreboards: the "beaten your time" notification to the rival (NotifyRival arrives; the
-  Message Center format is unknown); the Monthly Rivals screen does not load with the
-  server's time trials (`--time-trials`).
-- Car clubs: creating one in the game (keyboard), invitations, club rankings, borrowing a
-  shared car (`DownloadSharedCar`) were not tried.
+- The other services (storefront, DLC metadata) get empty answers.
+- Monthly Rivals: a time trial raced to its end (score, ghost, bounty) was not tried; the
+  server has two sample trials and no tool to edit them.
+- Car gifts between players: the game's CAR SELECT (Dak's Garage, CHANGE CAR) offers GET
+  IN CAR, VIEW CAR, SHARE CAR (the club garage) and VIEW HISTORY, no GIFT CAR, so only the
+  server's operator gifts (`/gift`) reach the Message Center; the `SendCarGift` path is
+  server-side and unit-tested only.
+- Notifications: auction ones are listed without text (no Auction House); the Message
+  Center's first poll comes 15 s after the sign-in, and the ones fetched before a race
+  show again after the race's next poll.
+- Car clubs: creating one in the game (keyboard), club rankings, borrowing a shared car
+  (`DownloadSharedCar`) were not tried.
 - Playground Games: a round of Cat & Mouse played to its end, and three or more
   consoles, were not tested.
 - `DLCMetadata.GetStringTableInfo` / `Content.DownloadContent` (DLC string tables and

@@ -145,8 +145,10 @@ echo "patched codegen: $OVERLAY/bin/rexglue"
 # POST_BUILD step only re-copies it when forza relinks). Builds against other
 # SDK versions keep their own plugin: it must match their librexruntime.so.
 for build in "$ROOT"/forza-recomp/out/build/*/; do
-    [ -f "$build/librexgpu-xenos.so" ] || continue
-    sdk_dir="$(sed -n 's/^rexglue_DIR:PATH=//p' "$build/CMakeCache.txt" 2>/dev/null)"
+    # Some build dirs have the plugin but no CMakeCache.txt (copies made for tests);
+    # under set -e the sed would end the script before it reached the others.
+    [ -f "$build/librexgpu-xenos.so" ] && [ -f "$build/CMakeCache.txt" ] || continue
+    sdk_dir="$(sed -n 's/^rexglue_DIR:PATH=//p' "$build/CMakeCache.txt")"
     case "$sdk_dir" in
         "$NIGHTLY"/*|"$OVERLAY"/*)
             # Rename over it: running instances may have the old file mapped.
