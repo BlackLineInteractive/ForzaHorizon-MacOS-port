@@ -20,16 +20,21 @@
 // 3. CPU drivers. The game fills the lobby with them itself (sub_8287BBE0:
 //    min(MaxPlayers - humans, MaxAIPlayers)); their difficulty (+0x44A, applied by
 //    sub_82877470 after every fill) follows the human share of the grid: at most 1/3
-//    Easy, 2/3 or more Hard, in between Medium. They are players the host owns, and the
+//    Easy, 2/3 or more Hard, in between Medium. The host creates them, and when the race
+//    loads it hands some of them to the other consoles, which run their simulation. The
 //    race's status steps never moved them: they follow the host's own player into "in
-//    game", are never kicked (kicking one threw the host out), and a peer neither sets
-//    their status nor lets them stop its load.
+//    game", are never kicked (kicking one threw the host out), a peer neither sets their
+//    status nor lets them stop its load, the results screen doesn't wait for them, and
+//    when the race unloads each console removes only the ones it runs (removing another
+//    console's the local way corrupted the session's message queue).
 // 4. A removal (kicked, voted out) ended the online game re-entrantly: the session
 //    teardown (sub_82CF7278) pumps the session's messages, a queued second removal ended
 //    the game again inside it and tore the session down under it, and the outer teardown
 //    read the freed session (null). The nested removal is dropped.
 //
-// FORZA_EVENT_TRACE=1 logs the round options, AI fill, intermission and launch.
+// FORZA_EVENT_TRACE=1 logs the round options, AI fill, intermission and launch, the
+// players' status changes and removals, and the CPU drivers (which console runs them,
+// their difficulty).
 
 #include "../kernel/live.h"
 #include "../platform/guest_memory.h"
@@ -46,6 +51,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 REXCVAR_DEFINE_BOOL(world_events, true, "Network/Forza Live",
@@ -53,9 +60,15 @@ REXCVAR_DEFINE_BOOL(world_events, true, "Network/Forza Live",
                     "starts (ends the free roam into the event's lobby)");
 REXCVAR_DEFINE_INT32(world_event_wait_seconds, 30, "Network/Forza Live",
                      "Horizon World: the wait lobby before an event, in seconds");
-REXCVAR_DEFINE_BOOL(world_event_cpu_with_peers, false, "Network/Forza Live",
-                    "Horizon World: CPU drivers also in events with more than one human (the "
-                    "return to the lobby after such a race crashes or hangs a console)");
+REXCVAR_DEFINE_BOOL(world_event_cpu_with_peers, true, "Network/Forza Live",
+                    "Horizon World: CPU drivers also in events with more than one human (off: "
+                    "only a solo event gets CPU drivers)");
+REXCVAR_DEFINE_BOOL(world_event_cpu_ready, true, "Network/Forza Live",
+                    "Horizon World: after an event the results screen doesn't wait for the "
+                    "CPU drivers to be ready to return to the lobby");
+REXCVAR_DEFINE_INT32(world_event_ai_grid, 0, "Network/Forza Live",
+                     "Horizon World test knob: the grid size the CPU drivers' difficulty rule "
+                     "uses (0: the event's grid; e.g. 4 makes 2 humans Medium, 3 Hard)");
 
 namespace {
 constexpr uint32_t kWorldPlaylist = 3;  // server/forza_live_lsp.py WORLD_HOPPER
@@ -237,6 +250,26 @@ uint32_t Humans(PPCContext& ctx, uint8_t* base, uint32_t game) {
   const uint32_t ai = CallGuest(ctx, base, __imp__sub_828754A0, game, kIsAiPlayer);
   return players > ai ? players - ai : 0;
 }
+
+// FORZA_EVENT_TRACE: the CPU drivers this console has, whether it runs them (local), their
+// status and the difficulty their driver (player->vfunc 0x78) got from sub_82568BD8: the
+// level (+0x25B) and its MPAIDifficultyMap values (+0x260, +0x264).
+void LogCpuDrivers(PPCContext& ctx, uint8_t* base, const char* what) {
+  std::string out;
+  for (const uint32_t p : ManagerPlayers(ctx, base, 0x1C)) {
+    const uint32_t record = StatusRecord(ctx, base, p);
+    if (!record || forza::GuestPtr(base, record)[7] != 1) continue;
+    const uint32_t local = CallVirtual(ctx, base, p, 0x9C) & 0xFF;
+    const uint32_t driver = CallVirtual(ctx, base, p, 0x78);
+    const uint8_t* d = driver ? forza::GuestPtr(base, driver) : nullptr;
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), " [%08X local %u status %u level %u %08X %08X]", p, local,
+                  forza::GuestPtr(base, record)[6], d ? d[0x25B] : 0xFF,
+                  d ? Load32(d + 0x260) : 0, d ? Load32(d + 0x264) : 0);
+    out += buf;
+  }
+  REXLOG_INFO("EVENT: {}: CPU drivers{}", what, out.empty() ? " none" : out);
+}
 }  // namespace
 
 // sub_8286A800(game, skip): the host asks for the next round's options (Find Game: the
@@ -257,12 +290,9 @@ extern "C" REX_FUNC(sub_8287E538) {
 }
 
 // sub_8287BBE0(game, flag): the host adds or removes CPU drivers (min(MaxPlayers -
-// humans, MaxAIPlayers)). With two or more consoles in the event the CPU drivers are
-// spread over them (each flags some of them local, player +152), and the race goes well,
-// but removing them when the race unloads crashed or hung one of the consoles every time
-// (docs/online_vision.md). Until that is solved, an event with more than one human runs
-// without CPU drivers unless world_event_cpu_with_peers is on: MaxAIPlayers is 0 for the
-// fill while two or more humans are in the lobby, and the event's own value otherwise.
+// humans, MaxAIPlayers)). With world_event_cpu_with_peers off, an event with more than one
+// human runs without them: MaxAIPlayers is 0 for the fill while two or more humans are in
+// the lobby, and the event's own value otherwise.
 extern "C" REX_FUNC(sub_8287BBE0) {
   const uint32_t game = ctx.r3.u32;
   if (Trace()) LogGame("AI fill", base, game, uint32_t(ctx.lr));
@@ -318,7 +348,10 @@ extern "C" REX_FUNC(sub_82875840) {
   const uint32_t game = ctx.r3.u32, lr = uint32_t(ctx.lr);
   if (Trace()) LogGame("round start", base, game, lr);
   __imp__sub_82875840(ctx, base);
-  if (Trace()) LogGame("round start done", base, game, lr);
+  if (Trace()) {
+    LogGame("round start done", base, game, lr);
+    if (WorldPlaylistGame(base)) LogCpuDrivers(ctx, base, "round start");
+  }
 }
 
 // sub_8286A468(game, player, status): this console sets a player's lobby status (0-2 in
@@ -343,6 +376,10 @@ extern "C" REX_FUNC(sub_8286A468) {
   }
   __imp__sub_8286A468(ctx, base);
   if (status != 4 || !REXCVAR_GET(world_events) || game != WorldPlaylistGame(base)) return;
+  if (Trace() && forza::GuestPtr(base, game)[kOptions] != kPresetFreeRoam &&
+      player == CallGuest(ctx, base, __imp__sub_828653D8, game)) {
+    LogCpuDrivers(ctx, base, "in game");
+  }
   uint8_t* g = forza::GuestPtr(base, game);
   if (!g[kHost] || g[kOptions] == kPresetFreeRoam) return;
   if (player != CallGuest(ctx, base, __imp__sub_828653D8, game)) return;
@@ -372,6 +409,27 @@ extern "C" REX_FUNC(sub_82880A88) {
     }
   }
   __imp__sub_82880A88(ctx, base);
+}
+
+// sub_828655E0(status record): CWaitForAllPlayersReadyToReturnToLobby's test (sub_82878530,
+// the results screen's "WAITING FOR OTHER PLAYERS..."): a player is ready unless loading or
+// in game (3, 4). CPU drivers stay in game until the lobby removes them, so the results
+// screen waited its 45 s for them after every event. In a world event they count as ready
+// (their status is left alone: set to 5 they crashed the host when the lobby removed them).
+extern "C" REX_FUNC(__imp__sub_828655E0);
+extern "C" REX_FUNC(sub_828655E0) {
+  if (REXCVAR_GET(world_event_cpu_ready) && REXCVAR_GET(world_events)) {
+    const uint8_t* r = forza::GuestPtr(base, ctx.r3.u32);
+    if (r[7] == 1) {
+      if (const uint32_t game = WorldPlaylistGame(base)) {
+        if (forza::GuestPtr(base, game)[kOptions] != kPresetFreeRoam) {
+          ctx.r3.u64 = 1;
+          return;
+        }
+      }
+    }
+  }
+  __imp__sub_828655E0(ctx, base);
 }
 
 // sub_82880A90(status record, status): the store behind every status change.
@@ -466,17 +524,19 @@ extern "C" REX_FUNC(sub_82877470) {
     uint8_t* g = forza::GuestPtr(base, game);
     if (g[kOptions] != kPresetFreeRoam && g[kHost]) {
       const uint32_t humans = Humans(ctx, base, game);
-      const uint8_t level = AiDifficulty(humans, g[kMaxPlayers] ? g[kMaxPlayers] : 8);
+      const int32_t knob = REXCVAR_GET(world_event_ai_grid);
+      const uint32_t grid = knob > 0 ? uint32_t(knob) : g[kMaxPlayers] ? g[kMaxPlayers] : 8;
+      const uint8_t level = AiDifficulty(humans, grid);
       g[kAiDifficulty] = level;
       if (level != last_difficulty) {
         static const char* const kNames[] = {"Easy", "Medium", "Hard"};
-        REXLOG_INFO("WORLD: {} human(s) of {}: CPU drivers {}", humans, g[kMaxPlayers],
-                    kNames[level]);
+        REXLOG_INFO("WORLD: {} human(s) of {}: CPU drivers {}", humans, grid, kNames[level]);
         last_difficulty = level;
       }
     }
   }
   __imp__sub_82877470(ctx, base);
+  if (Trace() && WorldPlaylistGame(base)) LogCpuDrivers(ctx, base, "AI difficulty applied");
 }
 
 // sub_82876378(game, player, flag): kick a player (CKickFailedLoadPlayers, vote kicks).
@@ -502,6 +562,7 @@ extern "C" REX_FUNC(sub_82876378) {
 // teardown, which then read the freed session. Nested calls are dropped.
 extern "C" REX_FUNC(sub_8286FC98) {
   static thread_local int depth = 0;
+  if (Trace()) REXLOG_INFO("EVENT: removed from the online game, reason {} (lr {:08X})", ctx.r4.u32, uint32_t(ctx.lr));
   if (depth > 0) {
     REXLOG_INFO("WORLD: removed from the online game again (reason {}) while ending it: ignored",
                 ctx.r4.u32);
@@ -510,6 +571,96 @@ extern "C" REX_FUNC(sub_8286FC98) {
   ++depth;
   __imp__sub_8286FC98(ctx, base);
   --depth;
+}
+
+// Removal trace (FORZA_EVENT_TRACE): who removes which player, from where.
+namespace {
+std::string Backtrace(const PPCContext& ctx, const uint8_t* base, int depth) {
+  std::string out;
+  uint32_t frame = ctx.r1.u32;
+  for (int i = 0; i < depth && frame; ++i) {
+    const uint32_t parent = Load32(forza::GuestPtr(base, frame));
+    if (parent <= frame || parent - frame > 0x10000 || (parent & 7)) break;
+    const uint32_t lr = Load32(forza::GuestPtr(base, parent - 8));
+    if (lr < 0x82000000 || lr >= 0x84000000) break;
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), " %08X", lr);
+    out += buf;
+    if (!(parent & 0xFFFF)) break;
+    frame = parent;
+  }
+  return out;
+}
+
+void TracePlayer(const char* what, PPCContext& ctx, uint8_t* base, uint32_t player, uint32_t arg) {
+  const uint32_t record = player ? StatusRecord(ctx, base, player) : 0;
+  const uint32_t local = player ? CallVirtual(ctx, base, player, 0x9C) & 0xFF : 0;
+  const uint8_t* r = record ? forza::GuestPtr(base, record) : nullptr;
+  REXLOG_INFO("EVENT: {} player {:08X} arg {} record {:08X} status {} cpu {} local {} (lr {:08X}){}",
+              what, player, arg, record, r ? r[6] : 0xFF, r ? r[7] : 0xFF, local,
+              uint32_t(ctx.lr), Backtrace(ctx, base, 8));
+}
+}  // namespace
+
+extern "C" REX_FUNC(__imp__sub_82573660);
+extern "C" REX_FUNC(__imp__sub_825723B0);
+extern "C" REX_FUNC(__imp__sub_825761E0);
+extern "C" REX_FUNC(__imp__sub_82CF7278);
+
+// sub_82573660(manager, player, broadcast): the player manager removes a player of this
+// console (its CPU drivers' names are freed in the database), then sub_825723B0.
+// The race's unload (CRemoveAIPlayersOnUnloadComponent, sub_826337A8, lr 0x82633824) calls
+// it for every CPU driver, also for those another console runs (player vfunc 0x9C false:
+// the host hands some of them to each peer when the race loads). For those the local path
+// is the wrong one (the game's own AI fill calls sub_82869CE0 first for them; a player of
+// another console leaves through the session, sub_825761E0), and the owner's removal comes
+// on top: with two consoles, one of them crashed or hung right there every time (the
+// session's message pump on a corrupted queue). Each console now removes only the CPU
+// drivers it runs; the others go when their owner's removal arrives through the session.
+extern "C" REX_FUNC(sub_82573660) {
+  const uint32_t player = ctx.r4.u32, lr = uint32_t(ctx.lr);
+  if (Trace()) TracePlayer("remove local", ctx, base, player, ctx.r5.u32);
+  if (lr == 0x82633824 && REXCVAR_GET(world_events) && WorldPlaylistGame(base)) {
+    const uint32_t record = StatusRecord(ctx, base, player);
+    if (record && forza::GuestPtr(base, record)[7] == 1 &&
+        !(CallVirtual(ctx, base, player, 0x9C) & 0xFF)) {
+      REXLOG_INFO("WORLD: the race unloads: CPU driver {:08X} is another console's, not removed here",
+                  player);
+      return;
+    }
+  }
+  __imp__sub_82573660(ctx, base);
+}
+
+// sub_825723B0(manager, player): every removal ends here (lists, status 6 via
+// sub_8287DEC8, a "player left" event).
+extern "C" REX_FUNC(sub_825723B0) {
+  const uint32_t player = ctx.r4.u32;
+  if (Trace()) TracePlayer("remove", ctx, base, player, 0);
+  __imp__sub_825723B0(ctx, base);
+  if (Trace()) REXLOG_INFO("EVENT: removed {:08X}", player);
+}
+
+// sub_82869CE0(game, player): the AI fill, before removing a CPU driver another console owns.
+extern "C" REX_FUNC(__imp__sub_82869CE0);
+extern "C" REX_FUNC(sub_82869CE0) {
+  if (Trace()) TracePlayer("AI fill: another console's CPU driver", ctx, base, ctx.r4.u32, 0);
+  __imp__sub_82869CE0(ctx, base);
+}
+
+// sub_825761E0(manager + 8, player + 4, flag): the session says a player left.
+extern "C" REX_FUNC(sub_825761E0) {
+  if (Trace()) TracePlayer("session removes", ctx, base, ctx.r4.u32 ? ctx.r4.u32 - 4 : 0, ctx.r5.u32);
+  __imp__sub_825761E0(ctx, base);
+}
+
+// sub_82CF7278(session, flag): the session is torn down.
+extern "C" REX_FUNC(sub_82CF7278) {
+  if (Trace()) {
+    REXLOG_INFO("EVENT: session teardown flag {} (lr {:08X}){}", ctx.r4.u32, uint32_t(ctx.lr),
+                Backtrace(ctx, base, 8));
+  }
+  __imp__sub_82CF7278(ctx, base);
 }
 
 namespace forza {

@@ -28,6 +28,7 @@
 #include <dlfcn.h>
 #include <execinfo.h>
 #endif
+#include <csignal>
 
 #include <chrono>
 #include <cstdint>
@@ -122,8 +123,23 @@ bool OnUnhandledFault(rex::arch::Exception* ex, void* /*data*/) {
   std::_Exit(134);
 }
 
+// A REX_FATAL (e.g. "Call to invalid or unregistered function at guest address 0", a
+// call through a null or freed object's vtable) logs one line and aborts: log where the
+// guest was, too (its LR is the indirect call's return address).
+void OnAbort(int sig) {
+  std::signal(sig, SIG_DFL);
+  REXLOG_CRITICAL("Aborted (signal {})", sig);
+  LogStack();
+  LogGuestState();
+  if (auto logger = rex::GetLogger()) logger->flush();
+  std::_Exit(134);
+}
+
 }  // namespace
 
-void InstallFaultGuard() { rex::arch::ExceptionHandler::Install(OnUnhandledFault, nullptr); }
+void InstallFaultGuard() {
+  rex::arch::ExceptionHandler::Install(OnUnhandledFault, nullptr);
+  std::signal(SIGABRT, OnAbort);
+}
 
 }  // namespace forza
