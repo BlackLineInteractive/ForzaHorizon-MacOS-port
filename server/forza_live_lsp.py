@@ -331,6 +331,24 @@ def load_playground_rounds():
 PLAYGROUND_ROUNDS = load_playground_rounds()
 
 
+# A Monthly Rivals time trial's options (Scoreboard.GetTimeTrials gives the hopper and
+# index): a circuit (preset 1) alone.
+TIME_TRIAL_XML = """<GameOptions GameTypePreset="1" GameTypeFilterType="Circuit" TrackId="{track}"
+    UseTraffic="false" CollisionMode="Default" MaxPlayers="1" MaxAIPlayers="0"
+    NumPlayerBuckets="1" NumTeams="0" HorizonTimeOfDayIsRandom="false" HorizonTimeOfDay="Noon"
+    PauseTimeOfDay="true" MinRecommendedCarClass="255" MaxRecommendedCarClass="255">
+  <Buckets>
+    <Bucket Name="GROUP 1" CanStartEndOfRaceCountdown="1" MinPlayers="1" MaxPlayers="1">
+      <CarRestrictions CarClassId="{cls}"/>
+    </Bucket>
+  </Buckets>
+  <StartingGridOptions StartType="Standing" GridOrderingType="Random"/>
+  <EndConditionOptions Type="NumLaps" NumLaps="{laps}" EndRaceCounter="30.0"/>
+  <ScoringOptions Type="TimeBased" BiggerIsBetter="0"/>
+</GameOptions>
+"""
+
+
 def hopper_get_game_options(server, xuid, body):
     """A round's options as GameOptions XML (the format of the game's
     media/gametunablesettings Default*HopperOptions.xml). DATA_DIR/hoppers/<hopperId>.xml
@@ -349,6 +367,11 @@ def hopper_get_game_options(server, xuid, body):
     elif os.path.isfile(path):
         with open(path, "rb") as f:
             xml = f.read()
+    elif hopper == scores.TIME_TRIAL_HOPPER:
+        track, laps, cls = scores.time_trial_rounds().get(round_num, scores.time_trial_rounds()[0])
+        xml = TIME_TRIAL_XML.format(track=track, laps=laps, cls=cls).encode()
+        log.info("title: time trial %d options for %016X: track %d laps %d class %d", round_num,
+                 xuid, track, laps, cls)
     elif hopper == PLAYGROUND_HOPPER and PLAYGROUND_ROUNDS:
         # roundNum counts up by one per round from a large start (12259, 12260, ...)
         xml = PLAYGROUND_ROUNDS[round_num % len(PLAYGROUND_ROUNDS)]

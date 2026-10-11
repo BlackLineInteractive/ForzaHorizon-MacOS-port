@@ -337,13 +337,46 @@ def notify_rival(xuid, body, notify=None):
     return x.reply()
 
 
+# Race Central's MONTHLY RIVALS: the server's time trials (GetTimeTrials). Each one is a
+# scoreboard of its own (isServerTimeTrial, board = the trial id) and a round of
+# TIME_TRIAL_HOPPER (Hopper.GetGameOptions(hopper, gameOptionsIndex): its track and laps).
+# Categories (TimeTrial.str): 0 time, 1 time with traffic, 2 drift, 3 Top Gear, 4 time
+# spec, 5 weekly, 6 autocross.
+TIME_TRIAL_HOPPER = 10
+TIME_TRIALS = [
+    # id, category, name, description, track id, track name, laps, car class (-1 any)
+    (1001, 0, "Horizon Monthly: Clear Springs", "Two laps of the Clear Springs Circuit, "
+     "any car. Beat the other players' times.", 156, "Clear Springs Circuit", 2, -1),
+    (1002, 0, "Horizon Monthly: Festival Sprint", "One lap on the festival's road course "
+     "in a class A car.", 322, "Festival Circuit", 1, 5),
+]
+
+
+def time_trial_rounds():
+    """{gameOptionsIndex: (track, laps, class)} of TIME_TRIAL_HOPPER."""
+    return {i: (t[4], t[6], t[7]) for i, t in enumerate(TIME_TRIALS)}
+
+
 def get_time_trials(xuid, body):
-    """The Rivals menu's server time trials: none yet (each needs a GameOptions round in a
-    hopper; the career events' Rivals don't use them)."""
     p, _ = x.decode(x.ScoreboardGetTimeTrials_Params, body)
-    log.info("title: GetTimeTrials %016X (max %d categories, %d trials)", xuid,
-             p["maxTimeTrialCategories"], p["maxTimeTrialResults"])
-    return x.reply(x.ScoreboardGetTimeTrials_Results)
+    now = time.time()
+    month = time.gmtime(now)
+    start = time.mktime((month.tm_year, month.tm_mon, 1, 0, 0, 0, 0, 0, 0))
+    end = start + 32 * 86400
+    cats, trials = [], []
+    for i, (tid, cat, name, desc, track, track_name, laps, cls) in enumerate(TIME_TRIALS):
+        if not cats or cats[-1]["category"] != cat:
+            cats.append({"category": cat, "startIndex": len(trials)})
+        trials.append({"id": tid, "scoreType": 3, "name": name, "description": desc,
+                       "trackId": track, "trackName": track_name,
+                       "hopperId": TIME_TRIAL_HOPPER, "gameOptionsIndex": i,
+                       "startDate": start, "endDate": end, "userRegistered": True,
+                       "featured": i == 0, "active": True, "displayCarClass": cls})
+    log.info("title: GetTimeTrials %016X (max %d categories, %d trials): %d", xuid,
+             p["maxTimeTrialCategories"], p["maxTimeTrialResults"], len(trials))
+    return x.reply(x.ScoreboardGetTimeTrials_Results, {
+        "timeTrialCategories": cats[:p["maxTimeTrialCategories"]],
+        "timeTrials": trials[:p["maxTimeTrialResults"]]})
 
 
 def submit_score(gamertag_of, ex):
