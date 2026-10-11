@@ -591,6 +591,15 @@ Server with `--challenge-range 3000 --challenge-any-direction` (the two cars sta
    A's GPS route was cleared (`screenshots/2026-10-11_h2h_01_gps_route_minimaps.jpg`:
    A's and B's minimaps during the race, A's after it).
 
+5. The "behind" rule for real (`t12.sh`, `--challenge-range 150`, ahead only): after B
+   jumped in, B's car was 139 m from A's and ahead of it (A facing 0.90, -0.45; B in
+   that direction), so A was behind B. A's text box said "X: challenge
+   the driver ahead", A's X sent the challenge (server: "#A challenges #B (139 m)").
+   B's X found nobody ahead (A was behind it): no challenge, and the game got the X: B's
+   screen showed LEADERBOARDS.
+6. The pause menu (MAP, CO-OP CHALLENGES, ..., END FREE ROAM, QUIT) open for 6 s: the
+   free roam's frame kept running (no LEFT), so pausing during a race doesn't forfeit.
+
 Seen on the way: in free roam X opens the LEADERBOARDS screen (B's screen during test 3
 of the first run), hence X is taken from the game only with a car ahead.
 
@@ -598,10 +607,11 @@ of the first run), hence X is taken from the game only with a car ahead.
 
 - Not tested with real driving to a landmark: scripted driving goes straight and hits
   the festival's barriers (in the first run A was stuck against the grandstand). The
-  distance and direction text updates every 0.2 s from the same position; the
-  left/right words assume x is right of z (left-handed, y up), unchecked.
-- The "behind" rule ran only in the server's unit test and the client's own check; the
-  tests used `--challenge-any-direction` with a range of 3 km.
+  distance and direction text updates every 0.2 s from the same position. The left/right
+  words take x as right of z (left-handed, y up): checked by steering left at full lock,
+  the forward vector turned from +x through +z to -x (`t10.sh` step `steer`).
+- The default range of 40 m was not used in a test (the cars start 90-140 m apart at the
+  festival); test 5 used 150 m with the same rule.
 - The text box is ImGui, not the game's HUD; the game has a challenge alert of its own
   (`IDS_RivalsAlerts_Challenge_MsgTitle/MsgBody/HudPopup`) that could carry it.
 - A world event starting during a race calls it off (both send LEFT); untested.

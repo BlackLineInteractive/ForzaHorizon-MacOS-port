@@ -264,6 +264,7 @@ void LeaveWorld() {
   in_world = false;
   if (gps != Gps::kNone) gps = Gps::kNone;  // a new free roam has a new sat nav
   Send({kLeft});
+  REXLOG_INFO("CHALLENGE: out of the world's free roam");
   if (state != State::kIdle) {
     state = State::kIdle;
     Show(kTitle, "You left the free roam: challenge over", 4);
