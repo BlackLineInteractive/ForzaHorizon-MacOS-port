@@ -13,9 +13,10 @@ PERF: scene= src=<guest|present> t= fps= p50= p95= p99= max= low1= stutters= hit
   presented).
 - Frame times in ms; `low1` = 1000 / mean of the slowest 1% of frame times;
   `stutters` = frames longer than 2x the window's p50; `hitches` = frames longer than
-  100 ms; `ontarget` = % of frames within +-20% of 33.3 ms; `pipelines` = graphics
-  pipelines created in the window (the plugin's "Creating graphics pipeline state" log
-  lines, placeholders included).
+  100 ms; `ontarget` = % of frames within +-20% of the target frame time (33.3 ms, or
+  16.7 ms with `frame_rate = 60`; two guest vblanks); `pipelines` = graphics pipelines
+  created in the window (the plugin's "Creating graphics pipeline state" log lines,
+  placeholders included).
 - `RECOMP_PERF_CSV=<file>` writes every frame; `RECOMP_PERF_SCENE` names the first scene;
   `SCENE:<name>` on the input FIFO starts a new one.
 
@@ -66,7 +67,21 @@ Results marked CONTENDED were taken while other games ran; they are not baseline
 | 2026-10-10 | build before 0025 (GJK hook) | freeroam (Xenia save) | warm | 2.5, no other game | free roam | present | 29.6 | 33.4 | 34.5 | 65.3 | 100.7 | 14.2 | 15 | 1 | 98.2 |
 | 2026-10-10 | patch 0025, no hook | freeroam (Xenia save) | warm | 4.2, no other game | free roam | guest | 29.9 | 33.3 | 35.3 | 37.8 | 66.6 | 20.8 | 0 | 0 | 99.1 |
 | 2026-10-10 | patch 0025, no hook | freeroam (Xenia save) | warm | 4.2, no other game | free roam | present | 29.8 | 33.4 | 34.4 | 35.5 | 68.2 | 19.1 | 3 | 0 | 99.3 |
+| 2026-10-10 | frame_rate 30 | freeroam (Xenia save) | warm | 4.0-5.8, no other game (reserved) | main menu | guest | 30.0 | 33.5 | 34.1 | 34.2 | 34.4 | 29.1 | 0 | 0 | 100 |
+| 2026-10-10 | frame_rate 60 | freeroam (Xenia save) | warm | 4.0-5.8, no other game (reserved) | main menu | guest | 60.0 | 16.8 | 17.3 | 17.4 | 17.8 | 56.9 | 0 | 0 | 100 |
+| 2026-10-10 | frame_rate 30 | freeroam (Xenia save) | warm | 4.0-5.8, no other game (reserved) | free roam | guest | 29.9 | 33.4 | 35.5 | 38.9 | 90.4 | 18.7 | 2 | 0 | 98.7 |
+| 2026-10-10 | frame_rate 30 | freeroam (Xenia save) | warm | 4.0-5.8, no other game (reserved) | free roam | present | 29.9 | 33.4 | 34.4 | 34.9 | 84.8 | 20.1 | 2 | 0 | 99.3 |
+| 2026-10-10 | frame_rate 60 | freeroam (Xenia save) | warm | 4.0-5.8, no other game (reserved) | free roam | guest | 58.9 | 16.8 | 19.5 | 24.8 | 46.8 | 32.4 | 8 | 0 | 94.8 |
+| 2026-10-10 | frame_rate 60 | freeroam (Xenia save) | warm | 4.0-5.8, no other game (reserved) | free roam | present | 58.8 | 16.8 | 18.0 | 25.5 | 46.7 | 31.1 | 10 | 0 | 96.6 |
+| 2026-10-10 | frame_rate 30 | race (festival race, 7 AI cars) | warm | 4.0-5.8, no other game (reserved) | race | guest | 30.0 | 33.4 | 35.8 | 37.1 | 58.0 | 24.1 | 0 | 0 | 99.4 |
+| 2026-10-10 | frame_rate 60 | race (festival race, 7 AI cars) | warm | 4.0-5.8, no other game (reserved) | race | guest | 41.6 | 24.8 | 30.2 | 34.1 | 44.8 | 26.4 | 0 | 0 | 18.4 |
+| 2026-10-10 | frame_rate 60 | race (festival race, 7 AI cars) | warm | 4.0-5.8, no other game (reserved) | race | present | 41.6 | 24.9 | 32.4 | 34.0 | 50.3 | 26.5 | 1 | 0 | 18.6 |
 
+- `frame_rate = 60` (docs/framerate.md), one reserved window, one game at a time; the load
+  average is the game's own (it keeps 3-4 cores busy). Free roam: 90 s at full throttle
+  from the user's Xenia save; race: GoPro Millennia Masters (signed up at that save's spawn
+  point), 25 s at full throttle from the start. `ontarget` counts against 16.7 ms at 60.
+  Races are bound by the GPU emulation (the render thread waits in D3D's `BlockOnFence`).
 - SDK patch 0025 (dot products give QNaN on overflow) A/B in one reserved window with no
   other game running (the script still says CONTENDED: the load average was above 2). The
   run before compiled 52 pipelines in free roam and the run after 20 (the first run warmed

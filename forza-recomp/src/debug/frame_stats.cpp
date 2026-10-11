@@ -3,6 +3,7 @@
 #include "frame_stats.h"
 
 #include <rex/logging.h>
+#include <rex/ui/flags.h>
 
 #include <algorithm>
 #include <atomic>
@@ -21,7 +22,12 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr double kWindowSeconds = 10.0;
-constexpr double kTargetMs = 1000.0 / 30.0;  // Forza Horizon runs at 30 fps
+// The game draws every second guest vblank: 33.3 ms at the console's 60 Hz, 16.7 ms with
+// frame_rate = 60 (docs/framerate.md).
+double TargetMs() {
+  const double hz = std::clamp(REXCVAR_GET(video_mode_refresh_rate), 24.0, 240.0);
+  return 2000.0 / hz;
+}
 constexpr double kHitchMs = 100.0;
 
 struct Config {
@@ -107,10 +113,11 @@ Stats Compute(std::vector<float> ms) {
   const double slow_mean = std::accumulate(ms.end() - slow, ms.end(), 0.0) / double(slow);
   s.low1 = slow_mean > 0 ? 1000.0 / slow_mean : 0;
   uint32_t on_target = 0;
+  const double target_ms = TargetMs();
   for (float f : ms) {
     if (f > 2.0 * s.p50) ++s.stutters;
     if (f > kHitchMs) ++s.hitches;
-    if (std::abs(f - kTargetMs) <= 0.2 * kTargetMs) ++on_target;
+    if (std::abs(f - target_ms) <= 0.2 * target_ms) ++on_target;
   }
   s.ontarget = 100.0 * on_target / double(n);
   return s;

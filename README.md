@@ -6,8 +6,8 @@ following the approach of [RecompiledHaloReach](https://github.com/Dyotson/Recom
 
 > **Status: early work in progress.** On Linux the game boots through the intro videos,
 > title screen and main menu into the opening drive, free roam, festival events and
-> races, at 30 fps with sound, DLC and saves (including saves from Xenia). Only tested
-> for short sessions so far.
+> races, at 30 fps (60 with `frame_rate = 60`) with sound, DLC and saves (including saves
+> from Xenia). Only tested for short sessions so far.
 
 This repository contains **no game code and no game data**. You need your own copy of the
 game (the Games on Demand / SVOD package of the base version, Title ID `4D5309C9`). The
@@ -135,6 +135,11 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   title services ("the Horizon server", `docs/title_services.md`): the playlists, the
   rounds' tracks, and online XP, which it keeps per player (`players/` in its data
   directory) and gives back at every sign-in; credits stay in your save.
+- **Frame rate:** `frame_rate = 60` in `forza.toml` (or `tools/play.sh --frame_rate=60`)
+  runs the game at 60 fps instead of the console's 30. The game times its physics and
+  clocks in real time, so they keep their speed. Free roam runs 59 fps; a race with 7 AI
+  cars about 42 fps for now, bound by the GPU emulation
+  ([`docs/framerate.md`](docs/framerate.md)).
 - **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
   once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`.
 - **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`.

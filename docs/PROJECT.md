@@ -265,12 +265,7 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     `--xenia` and the place it shows; log `sub_825A56E0`'s result and the content id.
   - Free-roam physics crash (`sub_82D3DB00`): fixed, see the next entry.
   - Performance: no clean-window numbers yet (docs/perf.md has contended ones only).
-  - Frame-rate unlock: xenia-canary/game-patches has no frame-rate patch for this game.
-    Cheapest experiment: `--video_mode_refresh_rate=120` (the SDK's guest vblank rate;
-    the game presents every second vblank, so 60 fps if it keeps up) and check whether
-    the game runs faster than real time (fixed per-frame step) by comparing the speed
-    reached after N seconds of throttle at 60 and 120 Hz. `--vsync=false` (1 kHz vblank)
-    unlocks completely. Not run yet.
+  - Frame-rate unlock: done, `frame_rate = 60` (see "60 fps" at the end of the log).
 
 - 2026-10-10 (late night): **the free-roam physics fault is fixed: Xenon's dot product
   returns QNaN on overflow.**
@@ -409,6 +404,29 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     level 3 / 2 with their XP.
   - Next: the Playground playlist's game (preset 7) untested; Find Custom Game; the other
     services (storefront, auctions, scoreboards) answer empty.
+
+- 2026-10-10 (late night): **60 fps: `frame_rate = 60`.** Details in `docs/framerate.md`.
+  - The game's vblank callback (`sub_8257E888` → `sub_8247C678`) sets the main loop's
+    event every second vblank; the main loop (`sub_823ED888`) waits on it and takes its
+    frame time from `KeTimeStampBundle->TickCount` (whole milliseconds; a 16-17 ms frame
+    counts as 1/59.94 s, the engine's 60 fps path from Forza Motorsport 4). So a 120 Hz
+    guest vblank runs the game at 60 fps with its simulation still in real time; the
+    checks below found nothing that counts frames or vblanks. Developer options in the binary (`unlockframerate`,
+    `framesperrender`, `frontend30fps`, `lockupdatetimeto60fps`, `forcecarphysicsupdatehz`,
+    ...) show the same design; retail has no command line to set them.
+  - Checked: the race clock of a festival race runs at real time at 30, 60 and a 120 fps
+    target (240 Hz vblank), the car accelerates the same (0-100 km/h in about 2.8 s), no
+    rendering faults in free roam or races, intro videos keep their speed, 10 free-roam
+    loads at 60 fps without a fault (`tools/repro_freeroam.sh`, `REX_FRAME_RATE=60`).
+  - Clean window (docs/perf.md), 30 → 60: main menu 30.0 → 60.0 fps, free roam 29.9 →
+    58.9 fps (p50 16.8 ms, p95 19.5), a race with 7 AI cars 30.0 → 41.6 fps (p50 24.8 ms).
+    In races the render thread spins in D3D's `BlockOnFence` (`sub_823E91F0`) about 70% of
+    the time, waiting for the GPU emulation, at both 120 and 240 Hz: faster GPU emulation
+    is the next step for 60 in races and for more than 60.
+  - `FORZA_XMP_NOSLEEP` is not needed: free roam holds 60 fps with the SDK's sleep.
+  - The Xenia report (textures and physics break when unlocked): Xenia's `vsync = false`
+    is a 1 kHz guest vblank, so the game runs uncapped and its frame time becomes 0-3 whole
+    milliseconds; not reproduced here (the port does not run that fast).
 
 ## Debugging recipes
 
