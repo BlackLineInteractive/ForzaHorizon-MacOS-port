@@ -294,6 +294,17 @@ hence the 5,000 shown), mileage bonus 1,200 Cr, difficulty and assists bonus +20
 this rival (the game says it notifies "your friend or club member"; the seeded rival was
 neither). Screenshots (local): `screenshots/2026-10-11_rivals_0*.jpg`.
 
+**Two consoles, player against player** (B a second copy of the career save, A's real lap
+of 1:47.228 on the board with its ghost): B's X RIVALS showed "YOUR RIVAL DRIVERA, TARGET
+01:47.228, BOUNTY 5,000 Cr"; loading the race B downloaded A's ghost (`DownloadFile(4)`,
+16,796 bytes) and the ghost car (kind 2) drove A's lap beside B. B's lap of 1:33.294:
+"Congratulations! You beat DriverA!", FINISH: `SubmitScoreEx(199, 93.294)` (new best, its
+ghost uploaded), `WriteRaceStatsEx` (1 of 2), **`NotifyRival(board 199, rivalXuid =
+DriverA, type 3, myScoreId = the scoreId of B's submission)`**, and the bounty (TOTAL 7,440
+Cr, B's balance 630,931 -> 638,371). With a real player as the rival the game does send
+NotifyRival; the server logs it (delivering it to the rival as a Message Center
+"beat you in the ... Rival Challenge" notification needs the notification format, below).
+
 Race Central (at the festival; the map's X fast-travels there) has LEADERBOARDS: Festival
 Events (VIEW OVERALL and the seven wristbands' event lists), Street Races, Showcase
 Events and Online XP. VIEW OVERALL is `GetRollupRows(type 0, view, pivot -1, eventTypeId
@@ -380,10 +391,9 @@ empty. The server sends no notifications by default.
 
 - The other services (storefront, car clubs, shared cars, notification contents, the
   Rivals menu's monthly time trials) get empty answers.
-- Scoreboards: `NotifyRival` (beating a friend's time; needs two consoles that are
-  friends) and the "beaten your time" notification to the rival, the ONLINE XP
-  leaderboard, and two consoles racing each other's ghosts were not seen yet; the Monthly
-  Rivals screen does not load with the server's time trials (`--time-trials`).
+- Scoreboards: the "beaten your time" notification to the rival (NotifyRival arrives; the
+  Message Center format is unknown), the ONLINE XP leaderboard; the Monthly Rivals screen
+  does not load with the server's time trials (`--time-trials`).
 - Playground Games: a round of Cat & Mouse played to its end, and three or more
   consoles, were not tested.
 - `DLCMetadata.GetStringTableInfo` / `Content.DownloadContent` (DLC string tables and
