@@ -417,6 +417,19 @@ probably they need parameters, or categories in Logon2's `notificationCategories
 (`{type, name, description, backgroundImageFileId}`, up to 5), which the server leaves
 empty. The server sends no notifications by default.
 
+## Testing these services
+
+`--dump-requests` saves every call under `DATA_DIR/requests`; `tools/xtsw_decode.py -n 20
+DATA_DIR` decodes the last ones with `server/forza_xtsw_all.py` (all 292 records). The
+career tests used a copy of the user's Xenia save (`tools/play.sh --xenia`, a copy per
+instance under its `XDG_DATA_HOME`), which starts at the GoPro Millennia Masters sign-up;
+the map (BACK) fast-travels (X on a festival icon) to Race Central, the Car Club, the
+Autoshow and the Paintshop. `tools/autodrive.py` drives a race for a test. The session
+scripts of these tests (`solo2.sh`: server + one or two consoles to single player; `pg.sh`:
+two consoles into Playground Games; `seed.py`: a score from a fake player, optionally with
+a ghost; `ut_*.py`: in-process unit tests of the services) are in the agent scratchpad's
+`forza-svc/`.
+
 ## Not done
 
 - The other services (storefront, notification contents, the Rivals menu's monthly time
