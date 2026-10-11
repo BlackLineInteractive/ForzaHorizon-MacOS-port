@@ -278,6 +278,22 @@ compressed data), kept as ghost 2; then `WriteRaceStatsEx` (place 8 of 8) and
 TARGET, BOUNTY 5,000Cr: Do you want to race your Rival? NO THANKS / BRING IT". The rival
 of a Rivals race is the one fetched when it started (RESTART keeps it).
 
+**The ghost round trip and a won Rivals race** (one console, the uploaded ghost given to
+another player's score, 200 s): X RIVALS on the ticket showed "YOUR RIVAL ... TARGET
+03:20.000, 01:24.870 (the gap to the personal best), BOUNTY 5,000 Cr"; while the Rivals
+race loaded the game downloaded the ghost (`DownloadFile(3, 256000)`, 17,332 bytes) and
+the race had the ghost car in the vehicle list (kind 2, the kind of another console's
+car) driving the recorded lap. A Rivals race is one flying lap against the target. After
+the lap (1:47.228, `autodrive.py` on the line saved from the career race): "Congratulations!
+You beat Seeded Rival! Do you want to collect the bounty and finish this Rivals event or
+continue lapping?", FINISH: `SubmitScoreEx(199, 107.228)` (a new best: its ghost uploaded,
+16,796 bytes), `WriteRaceStatsEx` (place 1 of 2), "FINISHED - YOU WON", and CASH REWARD:
+BOUNTY 1,000 Cr (the server's `bounty`; the game multiplies it, "WRISTBAND BONUS +400%",
+hence the 5,000 shown), mileage bonus 1,200 Cr, difficulty and assists bonus +20%, TOTAL
+7,440 Cr (the save's balance went from 635,556 to 642,996). `NotifyRival` was not sent for
+this rival (the game says it notifies "your friend or club member"; the seeded rival was
+neither). Screenshots (local): `screenshots/2026-10-11_rivals_0*.jpg`.
+
 Race Central (at the festival; the map's X fast-travels there) has LEADERBOARDS: Festival
 Events (VIEW OVERALL and the seven wristbands' event lists), Street Races, Showcase
 Events and Online XP. VIEW OVERALL is `GetRollupRows(type 0, view, pivot -1, eventTypeId
@@ -351,10 +367,10 @@ these handlers).
 
 - The other services (storefront, car clubs, shared cars, notification contents, the
   Rivals menu's monthly time trials) get empty answers.
-- Scoreboards: the ghost download (`DownloadFile`) and a Rivals race against a ghost,
-  beating a rival (`NotifyRival`, the bounty) and the ONLINE XP leaderboard were not seen
-  yet; the Monthly Rivals screen does not load with the server's time trials
-  (`--time-trials`).
+- Scoreboards: `NotifyRival` (beating a friend's time; needs two consoles that are
+  friends) and the "beaten your time" notification to the rival, the ONLINE XP
+  leaderboard, and two consoles racing each other's ghosts were not seen yet; the Monthly
+  Rivals screen does not load with the server's time trials (`--time-trials`).
 - Playground Games: a round of Cat & Mouse played to its end, and three or more
   consoles, were not tested.
 - `DLCMetadata.GetStringTableInfo` / `Content.DownloadContent` (DLC string tables and

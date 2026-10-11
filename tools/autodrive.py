@@ -19,13 +19,16 @@ import math, os, struct, sys, time
 X = sys.argv[1]
 SECS = float(sys.argv[2])
 LOG = open(sys.argv[3], "a") if len(sys.argv) > 3 else sys.stdout
-O = os.environ.get("FORZA_OUT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
-                                             "forza-recomp", "out", "svc"))
+O = os.environ.get("FORZA_OUT", os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                             "forza-recomp", "out", "svc")))
 WANT = ("XDG_DATA_HOME=%s/xdg_%s" % (O, X)).encode()
 HZ = 15.0
 LOOKAHEAD = float(os.environ.get("AD_LOOK", "18"))
 SPEED_FACTOR = float(os.environ.get("AD_SPEED", "0.8"))
 GAIN = float(os.environ.get("AD_GAIN", "0.25"))  # seconds of full lock per radian per tick
+LEAD_KINDS = {int(k) for k in os.environ.get("AD_KINDS", "1,3").split(",") if k}
+PATH_SAVE = os.environ.get("AD_PATH_SAVE")  # write the lap (x z speed per line) when closed
+PATH_LOAD = os.environ.get("AD_PATH_LOAD")  # start with a saved lap (races without CPU cars)
 
 
 def find_pid():
@@ -105,6 +108,9 @@ def send(*lines):
 
 path = []          # [(x, z, speed)] of the leader
 closed = False     # the leader came back to its start: path is one lap, used in a loop
+if PATH_LOAD:
+    path = [tuple(float(v) for v in line.split()) for line in open(PATH_LOAD) if line.strip()]
+    closed = True
 leader = None      # its slot
 last = {}          # slot -> (t, x, z)
 own_last = None
@@ -118,7 +124,7 @@ while time.time() < t_end:
     t0 = time.time()
     cs = cars()
     own = next((c for c in cs if c[0] == 0), None)
-    cpu = [c for c in cs if c[0] in (1, 3)]
+    cpu = [c for c in cs if c[0] in LEAD_KINDS]
     now = time.time()
     # speeds
     speeds = {}
@@ -147,6 +153,9 @@ while time.time() < t_end:
         if len(path) > 300 and math.hypot(lx - path[0][0], lz - path[0][1]) < 12:
             closed = True
             print(time.strftime("%T"), "lap closed: %d points" % len(path), file=LOG, flush=True)
+            if PATH_SAVE:
+                with open(PATH_SAVE, "w") as f:
+                    f.writelines("%.2f %.2f %.2f\n" % p for p in path)
     if len(path) < 5:
         send("RT:%.3f" % (tick * 1.2))
         time.sleep(max(0, tick - (time.time() - t0)))
