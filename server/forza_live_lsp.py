@@ -129,8 +129,9 @@ def add_arguments(parser):
                              "credits gift and a car gift for every player who signs in (once "
                              "per server run)")
     parser.add_argument("--time-trials", action="store_true",
-                        help="offer the server's Monthly Rivals time trials (forza_scores.py; "
-                             "the game's screen for them does not load yet)")
+                        help="offer the server's Monthly Rivals time trials "
+                             "(forza_scores.TIME_TRIALS; a trial needs a score on its board "
+                             "to have a rival)")
     parser.add_argument("--world-round-minutes", type=float, default=WORLD_ROUND_MINUTES,
                         help="length of a Horizon World round in minutes (default "
                              "%(default)s: endless). Only for clients with world_drop_in off, "
