@@ -76,6 +76,10 @@ Results marked CONTENDED were taken while other games ran; they are not baseline
 | 2026-10-10 | frame_rate 30 | race (festival race, 7 AI cars) | warm | 4.0-5.8, no other game (reserved) | race | guest | 30.0 | 33.4 | 35.8 | 37.1 | 58.0 | 24.1 | 0 | 0 | 99.4 |
 | 2026-10-10 | frame_rate 60 | race (festival race, 7 AI cars) | warm | 4.0-5.8, no other game (reserved) | race | guest | 41.6 | 24.8 | 30.2 | 34.1 | 44.8 | 26.4 | 0 | 0 | 18.4 |
 | 2026-10-10 | frame_rate 60 | race (festival race, 7 AI cars) | warm | 4.0-5.8, no other game (reserved) | race | present | 41.6 | 24.9 | 32.4 | 34.0 | 50.3 | 26.5 | 1 | 0 | 18.6 |
+| 2026-10-11 | GPU A/B: SDK as shipped (nightly runtime) | race (festival race, 7 AI cars) | warm | under 2 at start, no other game (reserved) | race | guest | 41.4 / 42.4 | 24.8 / 24.7 | 29.4 / 30.5 | 32.8 / 33.6 | 50.1 / 53.7 | 26.6 / 26.8 | 1 / 1 | 0 | 15.8 / 23.8 |
+| 2026-10-11 | GPU A/B: runtime with Reach SDK patch 0028 only | race (festival race, 7 AI cars) | warm | under 2 at start, no other game (reserved) | race | guest | 49.3 | 17.8 | 25.9 | 26.8 | 32.4 | 35.8 | 0 | 0 | 56.7 |
+| 2026-10-11 | GPU A/B: plugin with Reach SDK patches 0029-0032 only | race (festival race, 7 AI cars) | warm | under 2 at start, no other game (reserved) | race | guest | 50.3 | 18.4 | 26.2 | 27.8 | 42.1 | 32.7 | 1 | 0 | 60.2 |
+| 2026-10-11 | GPU A/B: Reach SDK patches 0028-0032 | race (festival race, 7 AI cars) | warm | under 2 at start, no other game (reserved) | race | guest | 59.7 / 59.7 | 16.8 / 16.8 | 17.9 / 17.9 | 20.9 / 20.7 | 33.6 / 35.7 | 42.6 / 43.2 | 1 / 1 | 0 | 98.6 / 98.6 |
 
 - `frame_rate = 60` (docs/framerate.md), one reserved window, one game at a time; the load
   average is the game's own (it keeps 3-4 cores busy). Free roam: 90 s at full throttle
@@ -105,3 +109,30 @@ Reading so far:
 - Main menu presents: frames reach the presenter every 33 ms on average but p95 is 48 ms
   (the present cadence alternates around the guest's regular 33 ms frames): pacing to
   look at.
+
+## GPU emulation speed (2026-10-11)
+
+Races at `frame_rate = 60` were bound by the emulated GPU's command processor. Profiled with
+user-space `perf_event_open` sampling (frame-pointer call chains; samply refuses at
+`perf_event_paranoid = 2`, this works) and a wall-clock sampler of the command processor
+thread; the details are in RecompiledHaloReach `docs/perf.md` > "GPU emulation speed", where
+the fixes live as SDK patches 0028-0032:
+
+- **0028 (runtime, `librexruntime.so`):** every write-watch fault (the game writing vertex
+  data the GPU had uploaded, thousands a second) rechecked the page's protection by reading
+  and parsing all of `/proc/self/maps` (~1,800 lines) while holding the global critical
+  region. The command processor needs that lock for its shared-memory uploads and waited on
+  it ~17% of the time. Now one `PROCMAP_QUERY` ioctl (Linux 6.11+).
+- **0029-0032 (GPU plugin):** register writes as ranges (they were 30% of the command
+  processor: 40 M a second, each with a register-table switch only for a debug log),
+  `WAIT_REG_MEM` wakes on the guest vblank interrupt instead of 1 ms sleeps, shared-memory
+  requests without the lock when the pages are valid, and unchanged fetch constants keep
+  their texture bindings.
+
+Results are the four "GPU A/B" rows above (one reserved window, same game binary, two runs
+where two values are given): the race goes from 41-42 fps (p99 33 ms) to 59.7 fps (p50
+16.8, p99 20.8 ms, 98.6% of frames on target). Either half alone reaches about 50 fps:
+frames snap to the 120 Hz guest vblank, so the command processor had to fit both. This
+project's SDK overlay ships the nightly `librexruntime.so`, so 0028 needs the overlay to
+carry a patched runtime as Reach's does. Screenshots of the race menu and the race match the
+unpatched build.
