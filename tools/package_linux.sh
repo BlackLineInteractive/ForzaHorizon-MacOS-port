@@ -28,10 +28,14 @@ mkdir -p "$DIST/licenses" "$DIST/server"
 cp "$BUILD/forza" "$DIST/"
 for module in "${MODULES[@]}"; do cp "$BUILD/$module" "$DIST/"; done
 cp -L "$SDK/lib/librexruntime.so" "$SDK/lib/librexgpu-xenos.so" "$DIST/"
+# The plugin comes out of the SDK's build tree, whose runpath points into that tree.
 if command -v patchelf > /dev/null; then
     patchelf --set-rpath '$ORIGIN' "$DIST/librexgpu-xenos.so"
 else
-    echo "warning: patchelf not found; librexgpu-xenos.so keeps its build-tree runpath" >&2
+    rpath_script="$(mktemp)"
+    printf 'file(RPATH_SET FILE "%s" NEW_RPATH "$ORIGIN")\n' "$DIST/librexgpu-xenos.so" > "$rpath_script"
+    cmake -P "$rpath_script"
+    rm -f "$rpath_script"
 fi
 cp "$ROOT/tools/xcontent_extract.py" "$ROOT/tools/install_dlc.py" "$DIST/"
 cp "$ROOT"/server/*.py "$DIST/server/"

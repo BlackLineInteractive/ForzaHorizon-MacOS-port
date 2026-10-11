@@ -11,6 +11,12 @@
 
 REX_DEFINE_APP(forza, ForzaApp::Create)
 
+REXCVAR_DEFINE_STRING(gpu_backend, "vulkan", "GPU",
+                      "GPU backend on Windows: vulkan (with this project's fixes) or d3d12")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+std::string ForzaGpuBackend() { return REXCVAR_GET(gpu_backend); }
+
 namespace {
 
 // Gives an SDK cvar this game's default. A value from forza.toml, the environment

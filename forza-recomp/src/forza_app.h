@@ -8,6 +8,8 @@
 #include "platform/achievement_toast.h"
 #include "platform/vulkan_hooks.h"
 
+#include <string>
+
 #include <rex/filesystem/devices/host_path_device.h>
 #include <rex/filesystem/vfs.h>
 #include <rex/logging.h>
@@ -25,6 +27,9 @@ void InstallFaultGuard();  // src/debug/fault_guard.cpp
 
 // SDK settings with this game's defaults (src/main.cpp).
 void ApplyForzaCvarDefaults();
+
+// GPU backend on Windows (the gpu_backend setting, src/main.cpp).
+std::string ForzaGpuBackend();
 
 class ForzaApp : public rex::ReXApp {
  public:
@@ -45,7 +50,11 @@ class ForzaApp : public rex::ReXApp {
     }
     // Loaded here rather than by the SDK so OnCreateDialogs can reach the GPU provider.
     if (!config.graphics && !config.gpu_plugin.empty()) {
+#ifdef _WIN32
+      config.graphics = rex::system::LoadGpuPlugin(config.gpu_plugin, ForzaGpuBackend());
+#else
       config.graphics = rex::system::LoadGpuPlugin(config.gpu_plugin);
+#endif
     }
     graphics_ = config.graphics.get();
   }
