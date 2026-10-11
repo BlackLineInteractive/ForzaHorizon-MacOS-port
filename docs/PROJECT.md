@@ -467,9 +467,32 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
   - The free roam flow ignores a timed end condition, so the server's world rounds are
     endless by default now (`--world-round-minutes 0`).
 
+- 2026-10-11 (night): **events from the Horizon World** (phase 2 of
+  `docs/online_vision.md`: details, traces and tests there).
+  - The Forza Live server starts one of the game's festival races in a world (on request,
+    `GET /world/event`, or every N minutes): it tells the world's host (UDP message 18),
+    whose client (`src/hooks/world_events.cpp`) asks for the next round again (the game
+    asks `GetGameOptions` for round N+1 when round N starts), gets the event, and ends the
+    free roam the way END FREE ROAM does (its player's status 5). The lobby waits 30 s,
+    the event runs, the world comes back.
+  - CPU drivers: the online lobby already has them (`MaxAIPlayers`; the host keeps
+    min(MaxPlayers - humans, MaxAIPlayers), names from `AIPlayers`, cars of the bucket's
+    class). To race they must be set "in game" with the host's player; kicking one throws
+    the host out of its own session; a nested removal crashed the host (all fixed). With
+    two consoles the CPU drivers are spread over them; both race fine, but back from the
+    race one console crashes or hangs, so multi-human events run without CPU drivers
+    for now (`world_event_cpu_with_peers`).
+  - Hooks call guest functions on a copy of the context (`CallGuest`) and walk the player
+    manager's guest `std::list` on the guest stack (`ManagerPlayers`).
+  - `tools/ghidra_decomp.sh` keeps a headless Ghidra running on `ghidra_projects/ForzaHorizon`
+    and decompiles functions on request (it repairs the no-return `__savegprlr` helpers
+    that cut the import's functions short).
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.
+- Decompile: `tools/ghidra_decomp.sh start`, then `tools/ghidra_decomp.sh 8287BBE0 ...`
+  (C files under `/tmp/forza-decomp-$USER/out`; `stop` when done).
 - Runs: `tools/run_forza.sh SECS [flags]` (logs in `$FORZA_RUN_DIR`), or
   `tools/live_session.sh DIR` + `tools/live_step.sh DIR WAIT INPUT...` (input FIFO,
   screenshot `DIR/shot.png` through `FORZA_SCREENSHOT_TRIGGER`). Headless frame dumps come

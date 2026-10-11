@@ -171,7 +171,10 @@ type tab's value, free roam 8, which public custom games set on their host), pro
 finds it and joins. `live_xmsg.cpp` answers `XSessionSearchEx` like `XSessionSearch` from
 the sessions the room's players host for that property's value (published on the Forza
 Live server), those with a free slot only, the fullest first. The **session host** calls
-`GetGameOptions` when a round launches.
+`GetGameOptions` for the **next** round when a round starts (the answer is the round the
+lobby shows after this one; a vote to skip asks again). In the Horizon World the server
+answers it with a festival event when one was requested for that world
+(`server/forza_world.py`, `docs/online_vision.md` phase 2).
 
 ### XP and credits
 

@@ -17,14 +17,17 @@
 //    instead of the world playlist's 5 s (+0x7E4/+0x7E8 of the online game, copied from
 //    the playlist's search settings), so the players in the world can pick a car under
 //    the event's restrictions and late ones can join. A grid full of humans starts at once.
-// 3. AI. The game fills the lobby with CPU drivers itself (sub_8287BBE0: min(MaxPlayers -
-//    humans, MaxAIPlayers)); their difficulty (+0x44A, applied by sub_82877470 after
-//    every fill) follows the human share of the grid: at most 1/3 Easy, 2/3 or more Hard,
-//    in between Medium.
-// 4. A kick for inactivity (or a vote kick) ended the online game re-entrantly: the
-//    session teardown (sub_82CF7278) pumps the session's messages, a queued second kick
-//    message ends the game again inside it and tears the session down under it, and the
-//    outer teardown reads the freed session (null). The nested kick is dropped.
+// 3. CPU drivers. The game fills the lobby with them itself (sub_8287BBE0:
+//    min(MaxPlayers - humans, MaxAIPlayers)); their difficulty (+0x44A, applied by
+//    sub_82877470 after every fill) follows the human share of the grid: at most 1/3
+//    Easy, 2/3 or more Hard, in between Medium. They are players the host owns, and the
+//    race's status steps never moved them: they follow the host's own player into "in
+//    game", are never kicked (kicking one threw the host out), and a peer neither sets
+//    their status nor lets them stop its load.
+// 4. A removal (kicked, voted out) ended the online game re-entrantly: the session
+//    teardown (sub_82CF7278) pumps the session's messages, a queued second removal ended
+//    the game again inside it and tore the session down under it, and the outer teardown
+//    read the freed session (null). The nested removal is dropped.
 //
 // FORZA_EVENT_TRACE=1 logs the round options, AI fill, intermission and launch.
 
@@ -50,6 +53,9 @@ REXCVAR_DEFINE_BOOL(world_events, true, "Network/Forza Live",
                     "starts (ends the free roam into the event's lobby)");
 REXCVAR_DEFINE_INT32(world_event_wait_seconds, 30, "Network/Forza Live",
                      "Horizon World: the wait lobby before an event, in seconds");
+REXCVAR_DEFINE_BOOL(world_event_cpu_with_peers, false, "Network/Forza Live",
+                    "Horizon World: CPU drivers also in events with more than one human (the "
+                    "return to the lobby after such a race crashes or hangs a console)");
 
 namespace {
 constexpr uint32_t kWorldPlaylist = 3;  // server/forza_live_lsp.py WORLD_HOPPER
@@ -103,6 +109,7 @@ int64_t taking_since = 0;
 uint32_t world_intermission[2] = {0, 0};
 bool intermission_changed = false;
 uint8_t last_difficulty = 0xFF;
+uint8_t event_max_ai = 0xFF;  // the event round's MaxAIPlayers (0xFF: none seen)
 
 // The online game while Find Game runs the world playlist, else 0.
 uint32_t WorldPlaylistGame(uint8_t* base) {
@@ -168,6 +175,7 @@ extern "C" REX_FUNC(__imp__sub_82577AD8);
 extern "C" REX_FUNC(__imp__sub_828736E0);
 extern "C" REX_FUNC(__imp__sub_823FD208);
 extern "C" REX_FUNC(__imp__sub_82880A90);
+extern "C" REX_FUNC(__imp__sub_82880A88);
 extern "C" REX_FUNC(__imp__sub_828653D8);
 extern "C" REX_FUNC(sub_8286A800);
 extern "C" REX_FUNC(sub_8286A468);
@@ -248,9 +256,30 @@ extern "C" REX_FUNC(sub_8287E538) {
   __imp__sub_8287E538(ctx, base);
 }
 
-// sub_8287BBE0(game, flag): the host adds or removes CPU drivers.
+// sub_8287BBE0(game, flag): the host adds or removes CPU drivers (min(MaxPlayers -
+// humans, MaxAIPlayers)). With two or more consoles in the event the CPU drivers are
+// spread over them (each flags some of them local, player +152), and the race goes well,
+// but removing them when the race unloads crashed or hung one of the consoles every time
+// (docs/online_vision.md). Until that is solved, an event with more than one human runs
+// without CPU drivers unless world_event_cpu_with_peers is on: MaxAIPlayers is 0 for the
+// fill while two or more humans are in the lobby, and the event's own value otherwise.
 extern "C" REX_FUNC(sub_8287BBE0) {
-  if (Trace()) LogGame("AI fill", base, ctx.r3.u32, uint32_t(ctx.lr));
+  const uint32_t game = ctx.r3.u32;
+  if (Trace()) LogGame("AI fill", base, game, uint32_t(ctx.lr));
+  if (REXCVAR_GET(world_events) && game && game == WorldPlaylistGame(base)) {
+    uint8_t* g = forza::GuestPtr(base, game);
+    if (g[kHost] && g[kOptions] != kPresetFreeRoam) {
+      if (event_max_ai == 0xFF) event_max_ai = g[kMaxAi];
+      const bool peers = Humans(ctx, base, game) > 1;
+      const uint8_t max_ai = peers && !REXCVAR_GET(world_event_cpu_with_peers) ? 0 : event_max_ai;
+      if (g[kMaxAi] != max_ai) {
+        REXLOG_INFO("WORLD: {} CPU drivers at most ({} human(s))", max_ai, Humans(ctx, base, game));
+        g[kMaxAi] = max_ai;
+      }
+    } else {
+      event_max_ai = 0xFF;
+    }
+  }
   __imp__sub_8287BBE0(ctx, base);
 }
 
@@ -284,26 +313,10 @@ extern "C" REX_FUNC(sub_82878800) {
   __imp__sub_82878800(ctx, base);
 }
 
-// sub_82875840(game): the round starts on every peer; it loads the round (sub_8286A2E0)
-// unless a local player is already in game (status 3-5: a player who joined a game in
-// progress). A world player who ended the free roam into an event's lobby could still
-// carry its free-roam status there (traced, see docs); it is set back to the lobby's.
+// sub_82875840(game): the round starts on every peer and loads it (sub_8286A2E0).
 extern "C" REX_FUNC(sub_82875840) {
   const uint32_t game = ctx.r3.u32, lr = uint32_t(ctx.lr);
   if (Trace()) LogGame("round start", base, game, lr);
-  if (REXCVAR_GET(world_events) && game == WorldPlaylistGame(base)) {
-    uint8_t* g = forza::GuestPtr(base, game);
-    if (g[kOptions] != kPresetFreeRoam && !g[kHost] && Load32(g + kState) == 11) {
-      const uint32_t player = CallGuest(ctx, base, __imp__sub_828653D8, game);
-      const uint32_t record = player ? StatusRecord(ctx, base, player) : 0;
-      const uint8_t old = record ? forza::GuestPtr(base, record)[6] : 0;
-      if (old >= 3 && old <= 5) {
-        REXLOG_INFO("WORLD: our status was still {} at the event's start: back to the lobby's",
-                    old);
-        CallGuest(ctx, base, sub_8286A468, game, player, 2);
-      }
-    }
-  }
   __imp__sub_82875840(ctx, base);
   if (Trace()) LogGame("round start done", base, game, lr);
 }
@@ -311,22 +324,25 @@ extern "C" REX_FUNC(sub_82875840) {
 // sub_8286A468(game, player, status): this console sets a player's lobby status (0-2 in
 // the lobby, 3 loading, 4 in game, 5 ready to return to the lobby / the host ends a free
 // roam, 6 gone). The CPU drivers of an online lobby are the host's players, and nothing
-// moves them on: the race waits for every player to be in game
+// sets them in game: the race waits for every player to be in game
 // (CWaitForAllPlayersToHaveLoadedToInGame, up to 45 s), then kicks those who aren't
-// (CKickFailedLoadPlayers), the CPU drivers with them; after the race it waits for
-// everyone to be ready to return to the lobby ("WAITING FOR OTHER PLAYERS...", about 50
-// s). In an event the CPU drivers follow the host's own player into 4 and 5.
+// (CKickFailedLoadPlayers), the CPU drivers with them. In an event they follow the host's
+// own player into "in game".
 extern "C" REX_FUNC(sub_8286A468) {
   const uint32_t game = ctx.r3.u32, player = ctx.r4.u32, status = ctx.r5.u32;
   if (Trace()) {
     REXLOG_INFO("EVENT: status of player {:08X} -> {} (lr {:08X})", player, status,
                 uint32_t(ctx.lr));
   }
-  __imp__sub_8286A468(ctx, base);
-  if ((status != 4 && status != 5) || !REXCVAR_GET(world_events) ||
-      game != WorldPlaylistGame(base)) {
-    return;
+  // A peer's round start walks the players it flags local (+152), which on a peer include
+  // CPU drivers too, and sets them loading: their statuses are the host's to set.
+  if (REXCVAR_GET(world_events) && game && game == WorldPlaylistGame(base) &&
+      !forza::GuestPtr(base, game)[kHost]) {
+    const uint32_t record = StatusRecord(ctx, base, player);
+    if (record && forza::GuestPtr(base, record)[7] == 1) return;
   }
+  __imp__sub_8286A468(ctx, base);
+  if (status != 4 || !REXCVAR_GET(world_events) || game != WorldPlaylistGame(base)) return;
   uint8_t* g = forza::GuestPtr(base, game);
   if (!g[kHost] || g[kOptions] == kPresetFreeRoam) return;
   if (player != CallGuest(ctx, base, __imp__sub_828653D8, game)) return;
@@ -339,10 +355,23 @@ extern "C" REX_FUNC(sub_8286A468) {
       ++count;
     }
   }
-  if (count) {
-    REXLOG_INFO("WORLD: the host is {}: {} CPU driver(s) too",
-                status == 4 ? "in game" : "ready to return to the lobby", count);
+  if (count) REXLOG_INFO("WORLD: the host is in game: {} CPU driver(s) too", count);
+}
+
+// sub_82880A88(status record): a player's status. The round start (sub_82875840) skips
+// loading the round when a player it flags local is already loading or in game (3-5: it
+// joined a game in progress). On a peer the CPU drivers are flagged local too and the host
+// has just set them loading, so a peer never loaded an event (it waited in the lobby until
+// the host's race kicked it after 45 s). CPU drivers don't count for that check.
+extern "C" REX_FUNC(sub_82880A88) {
+  if (uint32_t(ctx.lr) == 0x82875A10) {
+    const uint8_t* r = forza::GuestPtr(base, ctx.r3.u32);
+    if (r[7] == 1) {
+      ctx.r3.u64 = 0;
+      return;
+    }
   }
+  __imp__sub_82880A88(ctx, base);
 }
 
 // sub_82880A90(status record, status): the store behind every status change.

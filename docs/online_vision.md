@@ -202,15 +202,21 @@ Drop-in (`world_drop_in.cpp`, server rounds endless):
 10. END FREE ROAM (host B): both went to the lobby and loaded into the next round together
    after the intermission. A 60 s timed round did not end the free roam (2+ minutes).
 
-## Phase 2 (in progress): events from the world, a 30 s wait lobby, CPU drivers
+## Phase 2 (built, one open item): events from the world, a 30 s wait lobby, CPU drivers
 
 **How to play (operator):** run the server with the game's database (default
 `extracted/game/media/db/gamedb.slt`) and either `--world-event-minutes N` (every world
 gets an event after N minutes of free roam) or ask for one: `curl
 'http://SERVER:HTTP_PORT/world/event?session=all'` (or `session=<id>` from the status page's
-`worlds`, `&event=<Events.Id>` for a given event). The players in that world are taken to
-the event's lobby, wait 30 s, race the event with CPU drivers filling the grid, and go
-back to the free roam after it.
+`worlds`, `&event=<Events.Id>` for a given event; the endpoint has no authentication,
+keep the HTTP port private). The players in that world are taken to the event's lobby,
+wait 30 s (others who pick Horizon World meanwhile join them), race the event, and go
+back to the free roam after it. A solo player races with CPU drivers filling the grid;
+an event with two or more humans has no CPU drivers for now (open item below). Server
+options: `--world-events 4,26` (pick from these `Events.Id`), `--world-event-laps N`,
+`--world-event-ai N` (`MaxAIPlayers`, default 7), `--world-event-players N` (grid, default
+8), `--game-db PATH`. Client cvars (`[Network/Forza Live]`): `world_events` (on),
+`world_event_wait_seconds` (30), `world_event_cpu_with_peers` (off).
 
 Code: `server/forza_world.py` (events, world state, the AI rule), `forza_live_server.py`
 (`WORLD_EVENT` message, `/world/event`, the `worlds` of the status page),
@@ -263,9 +269,46 @@ Code: `server/forza_world.py` (events, world state, the AI rule), `forza_live_se
   Andershak 6"), CPU cars with their name tags ahead, AI passing and finishing, "RACE ENDS
   IN 0:19" after the first finisher, the results and rewards screens, then the lobby and
   the world's free roam again (`screenshots/2026-10-11_events_01_cpu_drivers_race.jpg`).
-  After the race the same applies to "ready to return to the lobby" (status 5): the
-  host waited about 50 s on "WAITING FOR OTHER PLAYERS..." for its CPU drivers; they now
-  follow the host's player into 5 too.
+  After the race the results screen waits for every player to be ready to return to the
+  lobby (`CWaitForAllPlayersReadyToReturnToLobby`, `sub_82878530`: no player at status
+  3 or 4), up to 45 s; the CPU drivers never are, so the host sat about 50 s on "WAITING
+  FOR OTHER PLAYERS...". In a world event the CPU drivers count as ready in that check
+  (the status getter answers 5 for them inside it). Setting their status to 5 instead
+  worked for the wait but was followed by a host crash 4 s later ("Call to invalid or
+  unregistered function at guest address 0", no stack) when the lobby removed them
+  (status 6, `sub_8287DEC8`), which it does without trouble from status 4.
+- **Two consoles: the CPU drivers are spread over them.** On the peer, some of the CPU
+  drivers the host created are flagged local too (player +152, `vfunc 0x9C`: 3 of 6 in
+  the tests; the host flags all of them), so the consoles share their simulation. Clearing
+  that flag on the peer made the race never end ("RACE ENDS IN 0:05" ran out and both
+  kept racing): the peer has to run its share.
+- **A second human didn't load the event** (it stayed in the lobby, the host's race
+  waited 45 s and kicked it to the main menu, and raced with the CPU drivers alone). The
+  round start (`sub_82875840`) loads the round only if none of the players this console
+  flags local (player +152, `vfunc 0x9C`) is already loading or in game (status 3-5,
+  `sub_828809B8`: a player who joined a game in progress). On a peer, CPU drivers carry
+  that flag too (3 of the 6 in the test), and the host had just set them loading, so the
+  peer skipped its load. Now CPU drivers don't count for that check (hook on the status
+  getter `sub_82880A88` at that call, `lr 0x82875A10`), and a peer never sets a CPU
+  driver's status. With that, both consoles load, race the event together with the CPU
+  drivers (both "PLACE x/8", the CPU cars and their tags in both views) and see the
+  results.
+- **Open: back from a race with CPU drivers and two consoles, one console crashes or
+  hangs** (4 runs out of 4). When the race unloads, the CPU drivers are removed (status 6
+  via `sub_8287DEC8`; `CRemoveAIPlayersOnUnloadComponent`, not the AI fill: deferring the
+  fill changed nothing) and at that moment: the host crashed ("Call to invalid or
+  unregistered function at guest address 0", no stack), the peer hung (a worker thread
+  busy in the screen fade's gamma ramp, `sub_82586CD8` -> `sub_82C28070`, while the main
+  thread waited on critical section `0x832DF040`, "owner FFFFFFFF"), the host hung the same
+  way, or the peer crashed reading guest `0x10` in the session's message pump
+  (`sub_82CEC5A8` from `sub_82CF78E0`, the session's worker thread; the queue node was
+  null). Solo (one console) the same removal is fine. Leads: both consoles remove "their"
+  CPU drivers and the host's removal of the peer's ones arrives on top (a double removal
+  in the session's player map), or the session's message queue is pumped by two threads
+  (`sub_82CF78E0`'s worker and the main thread's teardown). Until it is solved, **an event
+  with more than one human runs without CPU drivers** (client cvar
+  `world_event_cpu_with_peers`, default off: the host's AI fill gets `MaxAIPlayers` 0
+  while two or more humans are in the lobby; a solo event keeps its CPU drivers).
 
 ### The flow (built)
 
@@ -297,6 +340,31 @@ Code: `server/forza_world.py` (events, world state, the AI rule), `forza_live_se
    which the server answers with the world (the event is consumed); after the race the
    lobby launches the world round (5 s) and the free roam goes on.
 
+### Tests (private server on UDP 21600 / HTTP 21601; event 4, 1 lap, `--world-events 4
+--world-event-laps 1`; the event requested with `curl .../world/event?session=all`)
+
+1. **CPU drivers online (solo):** A alone in the world; the event: the free roam ended,
+   the lobby showed the event with 7 CPU drivers and INTERMISSION counting from 30, the
+   race had all 8 cars (A started 5th of 8, CPU cars racing ahead with name tags, "RACE
+   ENDS IN" after the first finisher), results and rewards, then the lobby (5 s) and the
+   world's free roam again with A's own car
+   (`screenshots/2026-10-11_events_01_cpu_drivers_race.jpg`).
+2. **Two players, CPU drivers:** A hosts, B jumped into A's world; the event took both to
+   the lobby (both lobbies: DriverA, DriverB and 6 CPU drivers, both cars swapped for a
+   class B car), both loaded (after the fix above) and raced with the CPU drivers; back
+   from the race one console crashed or hung (the open item).
+3. **Two players, late join, no CPU drivers:** A alone in the world, the event, B picked
+   Horizon World 6 s into the 30 s wait: the server placed B into A's session, B was in
+   the lobby 2 s later, the CPU drivers left (2 humans), both raced (A saw B's car), both
+   went back to the world's free roam together, A hosting
+   (`screenshots/2026-10-11_events_02_two_players_late_join_race_world.jpg`).
+4. A world request reaches the host 1 s after the `curl`; the host asks for the next round
+   again and the server answers with the event 0.4 s later; the free roam ends at once.
+
+Not tested: a grid full of humans starting early (needs 8 players, or
+`--world-event-players 2` with two), the schedule (`--world-event-minutes`; its state
+machine was unit-tested in Python), a host migration during an event.
+
 ### The events
 
 From the game's database (`server/forza_world.py`): `Events` with `CareerTypeId` 1 or 2
@@ -318,7 +386,9 @@ more Hard, between them Medium (1-2 humans Easy, 3-5 Medium, 6-8 Hard). The serv
 it in the event's XML from the world's player count when the event is asked for; the
 host's client sets `+0x44A` again from the lobby's human count before every
 `sub_82877470` (each AI fill: whenever a player joins or leaves), so the level at the
-launch is the one of the final grid.
+launch is the one of the final grid. While multi-human events run without CPU drivers
+(see the open item above), only a solo event has them, and it gets Easy; with
+`world_event_cpu_with_peers` on, the whole rule applies.
 
 ### Fixed on the way
 

@@ -45,6 +45,7 @@ EVENT_MINUTES = 0.0     # schedule: an event every N minutes of a world (0: off)
 EVENT_LAPS = 0          # override the events' lap count (tests), 0: the event's own
 EVENT_IDS = []          # restrict the rotation to these event ids (empty: all)
 EVENT_AI = MAX_PLAYERS - 1  # MaxAIPlayers of an event
+EVENT_PLAYERS = MAX_PLAYERS  # an event's grid (MaxPlayers)
 
 # The game's own default playlist (HopperRaces): (event id, preset, track, laps, class)
 FALLBACK_EVENTS = [(0, 1, 322, 3, 255), (0, 2, 155, 1, 255), (0, 1, 107, 3, 255),
@@ -72,15 +73,19 @@ def add_arguments(parser):
     parser.add_argument("--world-event-ai", type=int, default=EVENT_AI,
                         help="MaxAIPlayers of an event (default %(default)s: CPU drivers fill "
                              "the grid of 8 at any human count; 0: no CPU drivers)")
+    parser.add_argument("--world-event-players", type=int, default=EVENT_PLAYERS,
+                        help="an event's grid, humans and CPU drivers (default %(default)s); "
+                             "a grid full of humans starts without the wait")
     parser.add_argument("--world-events", default="",
                         help="comma-separated event ids the worlds pick from (default: all "
                              "festival road races)")
 
 
 def configure(args):
-    global GAME_DB, EVENT_MINUTES, EVENT_LAPS, EVENT_IDS, EVENT_AI
+    global GAME_DB, EVENT_MINUTES, EVENT_LAPS, EVENT_IDS, EVENT_AI, EVENT_PLAYERS
     GAME_DB = args.game_db
-    EVENT_AI = max(0, min(MAX_PLAYERS - 1, args.world_event_ai))
+    EVENT_PLAYERS = max(1, min(MAX_PLAYERS, args.world_event_players))
+    EVENT_AI = max(0, min(EVENT_PLAYERS - 1, args.world_event_ai))
     EVENT_MINUTES = max(0.0, args.world_event_minutes)
     EVENT_LAPS = max(0, args.world_event_laps)
     EVENT_IDS = [int(x) for x in args.world_events.split(",") if x.strip()]
@@ -162,7 +167,7 @@ def event_xml(event, humans):
     eid, preset, track, laps, car_class = event
     return EVENT_XML.format(
         preset=preset, filter="Circuit" if preset == 1 else "PointToPoint", track=track,
-        players=MAX_PLAYERS, ai=EVENT_AI, difficulty=ai_difficulty(humans),
+        players=EVENT_PLAYERS, ai=EVENT_AI, difficulty=ai_difficulty(humans, EVENT_PLAYERS),
         car_class=car_class, laps=EVENT_LAPS or laps).encode()
 
 
