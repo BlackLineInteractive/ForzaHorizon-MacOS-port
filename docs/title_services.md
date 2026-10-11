@@ -249,10 +249,79 @@ gamertag, TARGET 03:55.000 and BOUNTY 5,000 Cr; A goes to car select, the Rivals
 starts (`GetBestScores(3, 199, car, class)` first) with the target on the HUD. Retiring
 calls `WriteRaceStatsEx` (finished, place 2 of 2) and shows "FINISHED - YOU LOST".
 
+Race Central (at the festival; the map's X fast-travels there) has LEADERBOARDS: Festival
+Events (VIEW OVERALL and the seven wristbands' event lists), Street Races, Showcase
+Events and Online XP. VIEW OVERALL is `GetRollupRows(type 0, view, pivot -1, eventTypeId
+1)`; an event is `GetRows(type 3, view, board = the event's Id)`; X changes the filter:
+view 2 Friends Only, 3 Favorites, 1 Near Me, 0 Global. Seen with the seeded score: the
+event's board showed "1 Seeded Rival, S 686 Gallardo LP570, 03:55.000" with ABS/TCS/gear
+columns and "YOU'RE NOT ON THE LEADERBOARD"; the overall board showed the rollup score as
+a time. A on a row offers SHOW GAMER CARD and ADD AS FAVORITE (`Storefront.
+AddFavoriteUser`, `GetStorefrontFavorites`; empty answers). Race Central's RIVALS has
+Monthly Rivals (`GetTimeTrials(7, 150)`: the server's time trials, none yet) and the
+career events' Rivals.
+
+### The Auction House and car gifts (`server/forza_market.py`)
+
+The server side is complete and unit-tested (`Auction.*`: GetGlobalConfig, Create,
+UploadAuctionTextures, SearchForAuction, GetAuctions, GetDetails, GetMyAuctions,
+GetMyBids, PlaceBid, RetrieveCarForAuction, RetrievePaymentForAuctionSold,
+RetrievePaymentsForAuctionLost, Cancel, Restart, RemoveMyBannedAuction, ReportContent;
+`Gifting.SendCarGift`, `RetrieveCarGift`, `RetrieveCreditsGift`), with the records in
+`DATA_DIR/auctions.json`, `gifts.json` and the car blobs in `DATA_DIR/market/`. The
+model follows the game's own tables:
+
+- Status per viewer (the labels in `sub_827DC788`, which reads the status at +0x68 of
+  its auction item = the wire record + 8): 0 active, 1 expired, 2 SOLD, 3 expired
+  (cancelled), 4 active and you are the top bidder, 5 WON, 6 OUTBID, 7 LOST; the buyout
+  price shows for 0, 4 and 6.
+- `allowedActions` bits (the action table at `0x8323E528`, 0x28-byte entries: label,
+  confirm, success title and text string ids, the bit, 1 = bidder / 2 = seller action):
+  0x1 Bid, 0x2 Buyout, 0x4 ResolveWon (collect the car), 0x8 ResolveFailedAuction (the car
+  back), 0x10 Restart, 0x20 Cancel, 0x40 Report, 0x80 RemoveBannedItem, 0x100 ReceiveMoney
+  (an outbid bid back), 0x200 ReceiveMoney (the sale); search a player's auctions, view
+  their storefront and gamercard have no bit.
+- Money: the game takes a bid from its own credits; PlaceBid's `amountRefunded` gives back
+  the bidder's earlier bid on the same auction; an outbid player collects theirs with
+  RetrievePaymentsForAuctionLost, the seller the winning bid with
+  RetrievePaymentForAuctionSold, the winner the car with RetrieveCarForAuction (marked
+  `wasOriginallyFromAuctionHouse`, one more owner in its history). A bid at the buyout
+  price ends the auction at once.
+
+**Not reachable in the game so far.** None of the menus checked opens the Auction House:
+the festival's Autoshow (manufacturers and a "$" tile, which is TRADE-IN CARS), Dak's
+Garage, the Paintshop (Design Creator, Load Design, Design Storefront), Race Central,
+the Car Club, the pause menu and the party lobby. The code is there (FM4's: the screens
+around `0x82864000`-`0x82888000`, `sub_82683930` the auction house screen, the config
+loader `sub_82873DC0` -> `GetGlobalConfig`, a menu entry `0x104` in the table at
+`0x8323E8C0` whose enable callback `sub_82674790` waits for that config) but no request
+to the Auction service was seen. Gifting has stubs only for `SendCarGift`,
+`RetrieveCarGift`, `RetrieveCreditsGift`, `MarkFileGiftRetrieved` (no
+`GetGiftsForUser`/`SendCreditsGift` in this game): a received gift arrives as a Message
+Center notification (`FileDepot_GiftCar` and others, below), whose parameter format is
+not known yet.
+
+### Notifications (Message Center)
+
+`Xls Notifications.StartNewSession` and `RetrieveForUser(nonce, maxResults 512,
+cbParameterBlockSize 0xC800)` (`sub_82AB3CF0`) fill the Message Center; each result is
+`{id, xuidRecipient, notificationType, hasThumbnail, isRead, deleteAction,
+expirationDate, cbParameters}` and their parameters follow in `parameterBlock`. Each type
+has a handler class (title string, created through a visitor whose vtables are at
+`0x82071A20`, `0x82071AE8` and `0x82071BB8`): TopFeatures_NewDlc `sub_82834668`,
+GeneralNews_SimpleMessage `sub_82834998`, GeneralNews_Banned `sub_82834B68`,
+FileDepot_AuctionOutbid/Won/Sold/Failed `sub_82834DF8`/`82835048`/`82835298`/`82835520`,
+OutOfStock `sub_82835768`, MoneyReceived `sub_82835940`, GiftMoney `sub_82835B70`,
+GiftItem `sub_82835DA8`, GiftCar and DeliveryFailed `sub_828362D8`, the Car Club ones
+(`sub_82836760`-`sub_82838138`), RivalsAlerts_Challenge and SpeedCamera_Challenge
+`sub_828386A0`, RivalsAlerts_Recommendation `sub_82838F48`. The server answers no
+notifications yet (the type numbers and parameter layouts are still to be read from
+these handlers).
+
 ## Not done
 
-- The other services (storefront, auctions, gifting, car clubs, shared cars, notification
-  contents) get empty answers: their screens show nothing.
+- The other services (storefront, car clubs, shared cars, notification contents, the
+  Rivals menu's monthly time trials) get empty answers.
 - Scoreboards: a submission and ghost from a real finished race, the ghost download and a
   race against it, the leaderboard screens (`GetRows`), `NotifyRival` were not seen yet
   (only the rival from a submitted score, above).

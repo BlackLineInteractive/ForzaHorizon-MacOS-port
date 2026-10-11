@@ -115,6 +115,10 @@ def add_arguments(parser):
                              "(default ./forza_live_data)")
     parser.add_argument("--dump-requests", action="store_true",
                         help="save every title server request to DATA_DIR/requests")
+    parser.add_argument("--playground-games", default="",
+                        help="the Playground Games playlist's rounds in turn, as game type "
+                             "presets: 4 Infected, 5 Cat & Mouse, 6 King (default: all three, "
+                             "4,5,6)")
     parser.add_argument("--world-round-minutes", type=float, default=WORLD_ROUND_MINUTES,
                         help="length of a Horizon World round in minutes (default "
                              "%(default)s: endless). Only for clients with world_drop_in off, "
@@ -127,6 +131,11 @@ def configure(args):
     DATA_DIR = args.data_dir
     DUMP = args.dump_requests
     WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
+    if args.playground_games:
+        wanted = [p.strip() for p in args.playground_games.split(",") if p.strip()]
+        by_preset = {xml.split(b'GameTypePreset="')[1].split(b'"')[0].decode(): xml
+                     for xml in load_playground_rounds()}
+        PLAYGROUND_ROUNDS[:] = [by_preset[p] for p in wanted if p in by_preset]
     os.makedirs(DATA_DIR, exist_ok=True)
     scores.configure(DATA_DIR)
     market.configure(DATA_DIR)
@@ -341,6 +350,7 @@ def hopper_get_game_options(server, xuid, body):
         with open(path, "rb") as f:
             xml = f.read()
     elif hopper == PLAYGROUND_HOPPER and PLAYGROUND_ROUNDS:
+        # roundNum counts up by one per round from a large start (12259, 12260, ...)
         xml = PLAYGROUND_ROUNDS[round_num % len(PLAYGROUND_ROUNDS)]
         log.info("title: hopper %d round %d for %016X: playground preset %s", hopper, round_num,
                  xuid, xml.split(b'GameTypePreset="')[1].split(b'"')[0].decode())
