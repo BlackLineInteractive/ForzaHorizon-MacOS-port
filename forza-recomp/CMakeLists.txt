@@ -102,12 +102,32 @@ set(FORZA_SOURCES
     src/platform/vulkan_hooks.cpp
 )
 
-# fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.
+if(APPLE)
+    list(APPEND FORZA_SOURCES src/platform/metal_hooks.mm)
+endif()
+
+# fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux/macOS only.
 if(WIN32)
     list(REMOVE_ITEM FORZA_SOURCES src/debug/fiber_trace.cpp)
     add_executable(forza WIN32 ${FORZA_SOURCES})
     target_compile_definitions(forza PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(forza PRIVATE ws2_32)
+elseif(APPLE)
+    add_executable(forza ${FORZA_SOURCES})
+    set_source_files_properties(src/platform/metal_hooks.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(forza PRIVATE
+        "-framework Metal"
+        "-framework QuartzCore"
+        "-framework Cocoa"
+        "-framework Foundation"
+    )
+    target_compile_definitions(forza PRIVATE VK_USE_PLATFORM_METAL_EXT GL_SILENCE_DEPRECATION)
+    if(EXISTS "/usr/local/opt/vulkan-headers/include")
+        target_include_directories(forza PRIVATE "/usr/local/opt/vulkan-headers/include")
+    endif()
+    if(EXISTS "/usr/local/opt/molten-vk/include")
+        target_include_directories(forza PRIVATE "/usr/local/opt/molten-vk/include")
+    endif()
 else()
     add_executable(forza ${FORZA_SOURCES})
 endif()
@@ -131,17 +151,26 @@ endif()
 # tools/build_rexglue_sdk.sh builds a patched plugin; this copies it over the SDK
 # one that rexglue_setup_target() stages next to the binary.
 # This project's overlay first; RecompiledHaloReach's (same patch set so far) otherwise.
-set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib/librexgpu-xenos.so")
-if(NOT EXISTS "${_forza_plugin}")
-    set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched/0.10.0.24/linux-amd64/lib/librexgpu-xenos.so")
+if(APPLE)
+    set(_plugin_name "librexgpu-xenos.dylib")
+    set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/darwin-amd64/lib/${_plugin_name}")
+    if(NOT EXISTS "${_forza_plugin}")
+        set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched/0.10.0.24/darwin-amd64/lib/${_plugin_name}")
+    endif()
+else()
+    set(_plugin_name "librexgpu-xenos.so")
+    set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib/${_plugin_name}")
+    if(NOT EXISTS "${_forza_plugin}")
+        set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched/0.10.0.24/linux-amd64/lib/${_plugin_name}")
+    endif()
 endif()
 set(FORZA_XENOS_PLUGIN "${_forza_plugin}"
-    CACHE FILEPATH "Patched librexgpu-xenos.so to ship instead of the SDK's")
-if(UNIX AND NOT APPLE)
+    CACHE FILEPATH "Patched GPU plugin to ship instead of the SDK's")
+if(UNIX)
     if(EXISTS "${FORZA_XENOS_PLUGIN}")
         add_custom_command(TARGET forza POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${FORZA_XENOS_PLUGIN}" "$<TARGET_FILE_DIR:forza>/librexgpu-xenos.so"
+                "${FORZA_XENOS_PLUGIN}" "$<TARGET_FILE_DIR:forza>/${_plugin_name}"
             VERBATIM)
     else()
         message(WARNING "Patched GPU plugin not found at ${FORZA_XENOS_PLUGIN}; "
@@ -149,9 +178,9 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
-# The SDK runtime dlopen()s guest-DLL modules by bare target name on Linux
-# (no "lib" prefix, no ".so" suffix), so emit the libraries under that name.
-if(UNIX AND NOT APPLE)
+# The SDK runtime dlopen()s guest-DLL modules by bare target name on Unix
+# (no "lib" prefix, no suffix), so emit the libraries under that name.
+if(UNIX)
     foreach(_module forza_XMediaFacade_default forza_SpeechFacade_default)
         if(TARGET ${_module})
             set_target_properties(${_module} PROPERTIES PREFIX "" SUFFIX "")

@@ -13,9 +13,15 @@
 
 REX_DEFINE_APP(forza, ForzaApp::Create)
 
+#if defined(__APPLE__)
+REXCVAR_DEFINE_STRING(gpu_backend, "metal", "GPU",
+                      "GPU backend: metal, vulkan (via MoltenVK), or d3d12 (Windows)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+#else
 REXCVAR_DEFINE_STRING(gpu_backend, "vulkan", "GPU",
                       "GPU backend on Windows: vulkan (with this project's fixes) or d3d12")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+#endif
 
 std::string ForzaGpuBackend() { return REXCVAR_GET(gpu_backend); }
 

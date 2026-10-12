@@ -7,6 +7,9 @@
 #include "debug/frame_stats.h"
 #include "platform/achievement_toast.h"
 #include "platform/hud_overlay.h"
+#if defined(__APPLE__)
+#include "platform/metal_hooks.h"
+#endif
 #include "platform/vulkan_hooks.h"
 
 #include <string>
@@ -64,11 +67,25 @@ class ForzaApp : public rex::ReXApp {
   // calls (swapchain present-mode log, RECOMP_PERF timing; src/platform/vulkan_hooks.h).
   // Also the text box of the Horizon World's head-to-head challenges (platform/hud_overlay.h).
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+#if defined(__APPLE__)
+    if (!forza::InstallMetalHooks(graphics_)) {
+      forza::InstallVulkanHooks(graphics_);
+    }
+#else
     forza::InstallVulkanHooks(graphics_);
+#endif
     forza::InstallHud(drawer, app_context());
   }
 
-  void OnPostSetup() override { forza::InstallVulkanHooks(runtime()->graphics_system()); }
+  void OnPostSetup() override {
+#if defined(__APPLE__)
+    if (!forza::InstallMetalHooks(runtime()->graphics_system())) {
+      forza::InstallVulkanHooks(runtime()->graphics_system());
+    }
+#else
+    forza::InstallVulkanHooks(runtime()->graphics_system());
+#endif
+  }
 
   // The SDK's achievement toasts, registered with the ImGui drawer only while one shows, so
   // the window is not repainted nonstop (src/platform/achievement_toast.h; from
