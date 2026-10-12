@@ -105,6 +105,7 @@ Results marked CONTENDED were taken while other games ran; they are not baseline
 | 2026-10-12 | GPU A/B: + 0036, 0038, 0039 | race, frame_rate 144 | warm | same | race | guest | 97.2 | 10.5 | 14.0 | 15.0 | 25.4 | 62.9 | 1 | 0 | 24.1 |
 | 2026-10-12 | GPU A/B: SDK as shipped | race, frame_rate 120 | warm | same | race | guest | 72.3 | 13.4 | 17.6 | 18.4 | 24.0 | 51.1 | 0 | 0 | 13.6 |
 | 2026-10-12 | GPU A/B: + 0036, 0038 | race, frame_rate 120 | warm | same | race | guest | 82.4 | 12.5 | 16.8 | 17.6 | 26.9 | 51.4 | 2 | 0 | 27.1 |
+| 2026-10-12 | GPU A/B: + 0036, 0038, 0039 | race, frame_rate 120 | warm | 0.4, no other game (reserved) | race | guest | 90.4 | 12.0 | 13.3 | 14.2 | 36.6 | 62.1 | 1 | 0 | 34.9 |
 | 2026-10-12 | GPU A/B: SDK as shipped | race, frame_rate 60 | warm | same | race | guest | 59.8 | 16.8 | 17.7 | 20.1 | 27.4 | 44.9 | 0 | 0 | 98.6 |
 | 2026-10-12 | GPU A/B: + 0036, 0038, 0039 | race, frame_rate 60 | warm | same | race | guest | 60.0 | 16.8 | 17.5 | 18.1 | 35.9 | 49.6 | 1 | 0 | 99.6 |
 | 2026-10-12 | GPU A/B: SDK as shipped | freeroam (Xenia save), 50 s, frame_rate 144 | warm | same | free roam | guest | 131.4 | 7.3 | 10.5 | 11.3 | 20.5 | 79.4 | 7 | 0 | 80.0 |
@@ -194,7 +195,12 @@ patches carried by both projects (`docs/sdk_patches.md`):
 
 The "GPU A/B" rows above (two reserved windows, runs back to back with one game at a time, the
 same game binary and runtime, only the executable-folder plugin differs): the race at 144 goes
-from 72.8 to 97.2 fps (p99 18.7 to 15.0 ms), free roam at 144 from 131.4 to 140.8 fps, and the
+from 72.8 to 97.2 fps (p99 18.7 to 15.0 ms), the race at 120 from 72.3 to 90.4 fps (p99 18.4
+to 14.2 ms), free roam at 144 from 131.4 to 140.8 fps, and the
 race at 60 keeps 60 fps with a shorter tail (p99 20.1 to 18.1 ms). The remaining command
 processor time is spread out: descriptor updates 17%, register writes 14%, hash lookups 8%,
 render target updates 7%.
+
+Installed 2026-10-12 13:39 (`tools/build_rexglue_sdk.sh`: the overlay `~/rexglue-sdk-patched-forza`
+and `forza-recomp/out/build/linux`). `--vulkan_hoist_shared_memory_uploads=false`,
+`--vulkan_threaded_submission=false` and `--clear_memory_page_state=true` switch each change off.

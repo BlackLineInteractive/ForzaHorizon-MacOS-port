@@ -230,7 +230,8 @@ anyway), A (START RIVALS).
 - **Races above 60 are bound by the GPU emulation** (the render thread waits in
   `BlockOnFence`): 76 fps at 120, 70 at 144 with the SDK as it was. SDK patches 0036, 0038 and
   0039 (docs/perf.md > "GPU emulation at high refresh rates") raised the race at 144 to 97 fps
-  (p99 15 ms) and free roam at 144 to 141; the command processor is still the bound.
+  (p99 15 ms), at 120 to 90 fps and free roam at 144 to 141; the command processor is still
+  the bound.
 - **Patch 0037 for RecompiledHaloReach**: the patch is written for both (Reach's own
   frame-rate scheme has the same 240 Hz cap); not ported yet.
 - `tools/build_rexglue_sdk.sh` stopped at patch 0018 on a clone that already had the whole
