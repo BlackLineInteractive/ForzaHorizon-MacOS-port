@@ -67,23 +67,17 @@ class ForzaApp : public rex::ReXApp {
   // calls (swapchain present-mode log, RECOMP_PERF timing; src/platform/vulkan_hooks.h).
   // Also the text box of the Horizon World's head-to-head challenges (platform/hud_overlay.h).
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
-#if defined(__APPLE__)
-    if (!forza::InstallMetalHooks(graphics_)) {
-      forza::InstallVulkanHooks(graphics_);
-    }
-#else
     forza::InstallVulkanHooks(graphics_);
+#if defined(__APPLE__)
+    forza::InstallMetalHooks(graphics_);
 #endif
     forza::InstallHud(drawer, app_context());
   }
 
   void OnPostSetup() override {
-#if defined(__APPLE__)
-    if (!forza::InstallMetalHooks(runtime()->graphics_system())) {
-      forza::InstallVulkanHooks(runtime()->graphics_system());
-    }
-#else
     forza::InstallVulkanHooks(runtime()->graphics_system());
+#if defined(__APPLE__)
+    forza::InstallMetalHooks(runtime()->graphics_system());
 #endif
   }
 

@@ -13,15 +13,9 @@
 
 REX_DEFINE_APP(forza, ForzaApp::Create)
 
-#if defined(__APPLE__)
-REXCVAR_DEFINE_STRING(gpu_backend, "metal", "GPU",
-                      "GPU backend: metal, vulkan (via MoltenVK), or d3d12 (Windows)")
-    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-#else
 REXCVAR_DEFINE_STRING(gpu_backend, "vulkan", "GPU",
-                      "GPU backend on Windows: vulkan (with this project's fixes) or d3d12")
+                      "GPU backend: vulkan (via MoltenVK on macOS, native on Linux/Windows) or d3d12 (Windows)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-#endif
 
 std::string ForzaGpuBackend() { return REXCVAR_GET(gpu_backend); }
 
@@ -64,13 +58,11 @@ void ApplyForzaCvarDefaults() {
   // Present with FIFO (vsync) only. The SDK prefers IMMEDIATE (tearing), and its UI thread
   // repaints nonstop on Linux: without a vsync wait that is thousands of presents a second,
   // GPU time taken from the emulated GPU (measured in RecompiledHaloReach, and here in
-  // docs/perf.md). forza.toml or the command line can allow the other modes again.
+  // frame_stats.cpp). The driver's vsync might also cap the present rate; FIFO tells the
+  // presentation engine to throttle, so the UI thread sleeps between frames.
   SetSdkCvarDefault("vulkan_allow_present_mode_immediate", "false");
   SetSdkCvarDefault("vulkan_allow_present_mode_mailbox", "false");
   SetSdkCvarDefault("vulkan_allow_present_mode_fifo_relaxed", "false");
-  // frame_rate above 30: the guest vblank at twice the frame rate, or at the frame rate when
-  // twice is past the SDK's limit (src/hooks/frame_time.cpp). A video_mode_refresh_rate set
-  // in forza.toml or on the command line wins.
   if (REXCVAR_GET(frame_rate) > 30) {
     SetSdkCvarDefault("video_mode_refresh_rate", std::to_string(forza::frame_time::VblankHz()));
   }
