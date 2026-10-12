@@ -21,7 +21,7 @@ cd "$DEST"
 git add -A
 if git diff --cached --quiet; then echo "generated code unchanged"; exit 0; fi
 # SYNC_TRAILER: extra lines for the commit message (e.g. co-author lines).
-git -c user.name=agent -c user.email=agent@local commit -q \
+git commit -q \
     -m "Codegen output for RecompiledForzaHorizon@$MAIN ($SDK)" ${SYNC_TRAILER:+-m "$SYNC_TRAILER"}
 git push -q origin HEAD
 echo "pushed generated code for $MAIN"
