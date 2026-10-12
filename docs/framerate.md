@@ -228,13 +228,14 @@ anyway), A (START RIVALS).
 ## Leftovers
 
 - **Races above 60 are bound by the GPU emulation** (the render thread waits in
-  `BlockOnFence`): 76 fps at 120, 70 at 144. Faster GPU emulation is what raises them.
+  `BlockOnFence`): 76 fps at 120, 70 at 144 with the SDK as it was. SDK patches 0036, 0038 and
+  0039 (docs/perf.md > "GPU emulation at high refresh rates") raised the race at 144 to 97 fps
+  (p99 15 ms) and free roam at 144 to 141; the command processor is still the bound.
 - **Patch 0037 for RecompiledHaloReach**: the patch is written for both (Reach's own
   frame-rate scheme has the same 240 Hz cap); not ported yet.
-- `tools/build_rexglue_sdk.sh` stops at patch 0018 on a clone that already has the whole
-  series (0035 changed 0018's context, so neither the forward nor the reverse check
-  passes); the 0037 runtime was built from the patched clone by hand (`cmake --build ...
-  --target rexruntime`, then installed as the script does).
+- `tools/build_rexglue_sdk.sh` stopped at patch 0018 on a clone that already had the whole
+  series (0035 changed 0018's context, so neither the forward nor the reverse check passed).
+  Fixed: the series is applied to a temporary index and only files that differ are rewritten.
 - Not measured: rates other than 60, 120 and 144 (165 and 240 run 330 and 480 Hz vblanks),
   more than two players online at mixed rates, the relay path (the test peers talked
   directly), the opening drive and the festival intro video above 60, Windows.

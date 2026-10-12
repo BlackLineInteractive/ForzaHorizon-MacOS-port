@@ -99,6 +99,16 @@ Results marked CONTENDED were taken while other games ran; they are not baseline
 | 2026-10-12 | frame_rate 144, SDK patch 0037 (288 Hz vblank) | race (festival race, 7 AI cars), 26 s | warm | 1.3, no other game (reserved) | race | present | 70.1 | 13.9 | 18.0 | 18.4 | 23.7 | 50.5 | 0 | 0 | 2.6 |
 | 2026-10-12 | frame_rate 144, SDK patch 0037 (288 Hz vblank) | freeroam (Xenia save), 50 s | warm | 4.3, no other game (reserved) | free roam | guest | 111.5 | 9.2 | 11.2 | 12.5 | 23.1 | 67.3 | 10 | 0 | 41.4 |
 | 2026-10-12 | frame_rate 144, SDK patch 0037 (288 Hz vblank) | freeroam (Xenia save), 50 s | warm | 4.3, no other game (reserved) | free roam | present | 110.6 | 9.5 | 10.8 | 13.3 | 23.7 | 65.0 | 6 | 0 | 40.8 |
+| 2026-10-12 | GPU A/B: SDK as shipped (0001-0037) | race (festival race, 7 AI cars), frame_rate 144 | warm | previous run's game, none other (reserved) | race | guest | 72.8 | 13.9 | 17.7 | 18.7 | 26.6 | 50.8 | 0 | 0 | 3.5 |
+| 2026-10-12 | GPU A/B: + SDK patches 0036, 0038 | race, frame_rate 144 | warm | same | race | guest | 78.8 | 13.5 | 15.9 | 17.4 | 26.7 | 53.8 | 0 | 0 | 6.8 |
+| 2026-10-12 | GPU A/B: + 0036, 0038, `--clear_memory_page_state=false` | race, frame_rate 144 | warm | same | race | guest | 93.2 | 10.6 | 14.3 | 15.9 | 23.7 | 54.9 | 2 | 0 | 18.5 |
+| 2026-10-12 | GPU A/B: + 0036, 0038, 0039 | race, frame_rate 144 | warm | same | race | guest | 97.2 | 10.5 | 14.0 | 15.0 | 25.4 | 62.9 | 1 | 0 | 24.1 |
+| 2026-10-12 | GPU A/B: SDK as shipped | race, frame_rate 120 | warm | same | race | guest | 72.3 | 13.4 | 17.6 | 18.4 | 24.0 | 51.1 | 0 | 0 | 13.6 |
+| 2026-10-12 | GPU A/B: + 0036, 0038 | race, frame_rate 120 | warm | same | race | guest | 82.4 | 12.5 | 16.8 | 17.6 | 26.9 | 51.4 | 2 | 0 | 27.1 |
+| 2026-10-12 | GPU A/B: SDK as shipped | race, frame_rate 60 | warm | same | race | guest | 59.8 | 16.8 | 17.7 | 20.1 | 27.4 | 44.9 | 0 | 0 | 98.6 |
+| 2026-10-12 | GPU A/B: + 0036, 0038, 0039 | race, frame_rate 60 | warm | same | race | guest | 60.0 | 16.8 | 17.5 | 18.1 | 35.9 | 49.6 | 1 | 0 | 99.6 |
+| 2026-10-12 | GPU A/B: SDK as shipped | freeroam (Xenia save), 50 s, frame_rate 144 | warm | same | free roam | guest | 131.4 | 7.3 | 10.5 | 11.3 | 20.5 | 79.4 | 7 | 0 | 80.0 |
+| 2026-10-12 | GPU A/B: + 0036, 0038, 0039 | freeroam (Xenia save), 50 s, frame_rate 144 | warm | same | free roam | guest | 140.8 | 7.1 | 8.6 | 10.6 | 21.6 | 86.6 | 5 | 0 | 93.3 |
 
 - 2026-10-12 rows (docs/framerate.md): one reserved window, one game at a time, back to back
   (the load average is the previous run's game), the race driven at full throttle for 26 s
@@ -164,3 +174,27 @@ frames snap to the 120 Hz guest vblank, so the command processor had to fit both
 project's SDK overlay ships the nightly `librexruntime.so`, so 0028 needs the overlay to
 carry a patched runtime as Reach's does. Screenshots of the race menu and the race match the
 unpatched build.
+
+## GPU emulation at high refresh rates (2026-10-12)
+
+Above 60 fps the races were bound by the emulated GPU's command processor again (its thread
+busy 99.7% of the time, the render thread spinning in `BlockOnFence`). RecompiledHaloReach
+`docs/perf.md` > "GPU emulation at high refresh rates" has the profile; the fixes are SDK
+patches carried by both projects (`docs/sdk_patches.md`):
+
+- **0036:** a vertex or index upload no longer ends the current render pass when no draw in it
+  has read the uploaded pages; it goes before the render pass with the other uploads there
+  (52,000 render pass instances and 133,000 barriers a second in the race at 144 before,
+  10,600 and 27,000 after).
+- **0038:** the deferred command buffer is replayed into Vulkan and submitted on a thread of its
+  own (that was 11% of the command processor thread).
+- **0039:** `clear_memory_page_state` off by default, as in Xenia. On (the SDK's default),
+  every page the CPU had written and the GPU read was uploaded again after every frame: 74,000
+  uploads (2 GB) a second in the race at 144; 1,800 off.
+
+The "GPU A/B" rows above (two reserved windows, runs back to back with one game at a time, the
+same game binary and runtime, only the executable-folder plugin differs): the race at 144 goes
+from 72.8 to 97.2 fps (p99 18.7 to 15.0 ms), free roam at 144 from 131.4 to 140.8 fps, and the
+race at 60 keeps 60 fps with a shorter tail (p99 20.1 to 18.1 ms). The remaining command
+processor time is spread out: descriptor updates 17%, register writes 14%, hash lookups 8%,
+render target updates 7%.
