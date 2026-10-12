@@ -10,6 +10,15 @@ This repository contains **no game code and no game data**. You need your own co
 game (the Games on Demand package of the base version, Title ID `4D5309C9`). The recompiled
 C++ is generated from your copy on your machine; no binaries are published here.
 
+## Screenshots
+
+Captured from the recompiled game running natively on Linux.
+
+| | |
+|---|---|
+| ![Free roam](docs/images/forza-free-roam.jpg)<br>Free roam | ![Circuit race](docs/images/forza-race.jpg)<br>Circuit race against 7 AI drivers |
+| ![Prologue drive](docs/images/forza-prologue-drive.jpg)<br>Free roam, Colorado mountains | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist: race lobby and races |
+
 ## What works
 
 - **Single player:** boot, menus, the opening drive, free roam, festival events and races
