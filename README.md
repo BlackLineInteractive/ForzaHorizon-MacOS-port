@@ -123,7 +123,8 @@ own server, see [`docs/hosting.md`](docs/hosting.md).
 
 [`docs/PROJECT.md`](docs/PROJECT.md) (status log, findings, debugging recipes),
 [`docs/playing.md`](docs/playing.md), [`docs/hosting.md`](docs/hosting.md),
-[`docs/perf.md`](docs/perf.md), [`docs/framerate.md`](docs/framerate.md).
+[`docs/perf.md`](docs/perf.md), [`docs/framerate.md`](docs/framerate.md),
+[`docs/BACKLOG.md`](docs/BACKLOG.md) (planned work).
 
 ## Legal
 
