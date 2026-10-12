@@ -29,6 +29,7 @@ to DATA_DIR/players/<XUID>.json. Files an operator puts under DATA_DIR/storage/<
 served as they are for GET /storage/<path>.
 """
 
+import hmac
 import json
 import logging
 import os
@@ -36,6 +37,7 @@ import time
 import urllib.parse
 
 import forza_clubs as clubs
+import forza_limits as limits
 import forza_market as market
 import forza_notifications as notifications
 import forza_scores as scores
@@ -152,6 +154,7 @@ def configure(args):
                      for xml in load_playground_rounds()}
         PLAYGROUND_ROUNDS[:] = [by_preset[p] for p in wanted if p in by_preset]
     os.makedirs(DATA_DIR, exist_ok=True)
+    limits.configure(DATA_DIR)
     scores.configure(DATA_DIR)
     market.configure(DATA_DIR)
     clubs.configure(DATA_DIR, load_player)
@@ -196,6 +199,9 @@ def load_player(xuid):
 def save_player(xuid, record):
     path = player_path(xuid)
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    if not os.path.exists(path) and len(os.listdir(os.path.dirname(path))) >= limits.MAX_PLAYERS:
+        log.warning("player limit reached: %016X not saved", xuid)
+        return
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(record, f, indent=1, sort_keys=True)
@@ -487,6 +493,21 @@ def service_call(headers, body, server=None):
         return x.failure(2, "bad parameters")
 
 
+ADMIN_TOKEN = os.environ.get("FORZA_ADMIN_TOKEN", "")
+
+
+def is_admin(peer, headers, query):
+    """Operator endpoints (/gift, /notify, /world/event): requests from this machine, or
+    carrying the FORZA_ADMIN_TOKEN (header X-Admin-Token or ?token=). A request that came
+    through a reverse proxy (X-Forwarded-For / X-Real-IP) counts as remote."""
+    if ADMIN_TOKEN:
+        given = headers.get("x-admin-token") or query.get("token", [""])[0]
+        if hmac.compare_digest(given.encode(), ADMIN_TOKEN.encode()):
+            return True
+    proxied = "x-forwarded-for" in headers or "x-real-ip" in headers or "forwarded" in headers
+    return bool(peer) and peer[0] in ("127.0.0.1", "::1") and not proxied
+
+
 def find_player(who):
     """A player's XUID from a gamertag or a hex XUID (players who signed in here)."""
     folder = os.path.join(DATA_DIR, "players")
@@ -554,8 +575,10 @@ def handle(server, method, path, headers, body, peer):
                  headers.get("x-method", "?"), len(body))
         return 200, "bin/xtsw", service_call(headers, body, server)
     log.info("LSP request %s %s (%d bytes)", method, path, len(body))
-    if url.path in ("/notify", "/gift") and peer and peer[0] in ("127.0.0.1", "::1"):
+    if url.path in ("/notify", "/gift"):
         query = urllib.parse.parse_qs(url.query)
+        if not is_admin(peer, headers, query):
+            return 403, "text/plain", b"forbidden"
         return (notify_request if url.path == "/notify" else gift_request)(query)
     if url.path.startswith("/storage/") and method == "GET":
         data = stored_file(url.path)

@@ -54,6 +54,24 @@ def set_rate_limit(bytes_per_second):
     global RATE_LIMIT, RATE_BURST
     RATE_LIMIT, RATE_BURST = bytes_per_second, 4 * bytes_per_second
 MAX_NAME = 15  # XUSER_NAME_SIZE minus the terminator
+MAX_ROOM = 64
+MAX_MOTD = 64  # keeps the WELCOME about as large as the HELLO that asks for it
+# Limits against abuse from the internet (every datagram is untrusted):
+MAX_PEERS_PER_IP = 16  # registered players behind one public address (a LAN, a CGNAT)
+PACKETS_PER_IP = (1500, 3000)  # datagrams/s and burst accepted from one address
+HELLOS_PER_IP = (2, 20)  # new registrations/s and burst from one address
+ERRORS_PER_IP = (2, 10)  # "not registered" replies/s and burst to one address
+
+
+def take(buckets, key, limit, cost=1.0):
+    """Token bucket per key: limit = (tokens per second, burst). False = over the limit."""
+    rate, burst = limit
+    now = time.monotonic()
+    tokens, last = buckets.get(key, (burst, now))
+    tokens = min(burst, tokens + (now - last) * rate)
+    ok = tokens >= cost
+    buckets[key] = (tokens - cost if ok else tokens, now)
+    return ok
 
 log = logging.getLogger("forza-live")
 
@@ -92,7 +110,11 @@ def u32_to_ip(v):
 
 class ForzaLive(asyncio.DatagramProtocol):
     def __init__(self, motd, max_peers):
-        self.motd = motd.encode()[:512]
+        self.motd = motd.encode()[:MAX_MOTD]
+        self.packet_buckets = {}  # ip -> token bucket of datagrams accepted
+        self.hello_buckets = {}
+        self.error_buckets = {}
+        self.per_ip = {}  # ip -> registered peers
         self.max_peers = max_peers
         self.epoch = random.randrange(1, 0x10000)  # changes when the server restarts
         self.peers = {}  # id -> Peer
@@ -117,7 +139,10 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.send(addr, ERROR, struct.pack(">BH", code, len(text)) + text)
 
     def datagram_received(self, data, addr):
-        if len(data) < 5 or data[:4] != MAGIC:
+        if len(data) < 5 or data[:4] != MAGIC or len(data) > 2048:
+            return
+        if not take(self.packet_buckets, addr[0], PACKETS_PER_IP):
+            self.dropped_packets += 1
             return
         kind, body = data[4], data[5:]
         try:
@@ -126,8 +151,10 @@ class ForzaLive(asyncio.DatagramProtocol):
                 return
             peer = self.by_addr.get(addr)
             if peer is None:
-                # Unknown sender (e.g. the server restarted): ask it to register again.
-                self.error(addr, 1, "not registered")
+                # Unknown sender (e.g. the server restarted): ask it to register again
+                # (rate limited: the sender's address may be forged).
+                if take(self.error_buckets, addr[0], ERRORS_PER_IP):
+                    self.error(addr, 1, "not registered")
                 return
             peer.seen = time.monotonic()
             if kind == BROADCAST:
@@ -146,14 +173,14 @@ class ForzaLive(asyncio.DatagramProtocol):
                 self.on_match(peer, kind, body)
             elif kind == CHALLENGE and body:
                 self.challenges.on_message(peer.id, body)
-        except (struct.error, IndexError, UnicodeDecodeError) as e:
-            log.debug("bad packet from %s: %s", addr, e)
+        except Exception as e:  # a malformed datagram must never end the server
+            log.debug("bad packet from %s: %r", addr, e)
 
     def on_hello(self, body, addr):
         version, token, xuid, local_ip, local_port = struct.unpack_from(">HQQIH", body, 0)
         pos = 24
         room_len = body[pos]
-        room = body[pos + 1:pos + 1 + room_len].decode()
+        room = body[pos + 1:pos + 1 + room_len].decode()[:MAX_ROOM]
         pos += 1 + room_len
         name_len = body[pos]
         name = body[pos + 1:pos + 1 + name_len].decode()[:MAX_NAME]
@@ -165,8 +192,11 @@ class ForzaLive(asyncio.DatagramProtocol):
             self.drop(peer, "restarted")  # same address, new game process
             peer = None
         if peer is None:
-            if len(self.peers) >= self.max_peers:
-                self.error(addr, 3, "server full")
+            if len(self.peers) >= self.max_peers or self.per_ip.get(addr[0], 0) >= MAX_PEERS_PER_IP:
+                if take(self.error_buckets, addr[0], ERRORS_PER_IP):
+                    self.error(addr, 3, "server full")
+                return
+            if not take(self.hello_buckets, addr[0], HELLOS_PER_IP):
                 return
             while self.next_id in self.peers or self.next_id == 0:
                 self.next_id = (self.next_id + 1) & 0xFFFFFF
@@ -174,6 +204,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             self.next_id = (self.next_id + 1) & 0xFFFFFF
             self.peers[peer.id] = peer
             self.by_addr[addr] = peer
+            self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
             log.info("join  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)", peer.id, name, xuid,
                      room, addr[0], addr[1], u32_to_ip(local_ip), local_port)
         peer.seen = time.monotonic()
@@ -258,6 +289,8 @@ class ForzaLive(asyncio.DatagramProtocol):
         XSESSION_INFO, status (u8 length + UTF-8), extra (u16 length + bytes). Sent in
         parts that fit a datagram."""
         peers = ([src] + self.room_peers(src))[:100]
+        if not self.spend(src, 600):
+            return
         entries = []
         for p in peers:
             name, status = p.name.encode(), p.status.encode()[:255]
@@ -391,7 +424,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                 break
             entries.append(entry)
             size += len(entry)
-        self.send(peer.addr, MATCH_RESULTS, struct.pack(">IH", request, len(entries)) + b"".join(entries))
+        if self.spend(peer, size):
+            self.send(peer.addr, MATCH_RESULTS, struct.pack(">IH", request, len(entries)) + b"".join(entries))
 
     # --- Horizon World events (forza_world.py) ---
 
@@ -462,12 +496,21 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.peers.pop(peer.id, None)
         if self.by_addr.get(peer.addr) is peer:
             del self.by_addr[peer.addr]
+            left = self.per_ip.get(peer.addr[0], 1) - 1
+            if left > 0:
+                self.per_ip[peer.addr[0]] = left
+            else:
+                self.per_ip.pop(peer.addr[0], None)
         log.info("leave #%d %r (%s)", peer.id, peer.name, why)
 
     def expire(self):
         now = time.monotonic()
         for peer in [p for p in self.peers.values() if now - p.seen > PEER_TIMEOUT]:
             self.drop(peer, "timed out")
+        for buckets in (self.packet_buckets, self.hello_buckets, self.error_buckets):
+            if len(buckets) > 5000:  # forgotten addresses (forged sources)
+                for ip in [ip for ip, (_, last) in buckets.items() if now - last > 60]:
+                    del buckets[ip]
 
     def status(self):
         rooms = {}
@@ -508,13 +551,25 @@ async def read_request(reader, idle=15):
         if ":" in line:
             key, value = line.split(":", 1)
             headers[key.strip().lower()] = value.strip()
+    if len(lines) > MAX_HEADERS:
+        raise ValueError("too many headers")
     length = int(headers.get("content-length", 0) or 0)
+    if not 0 <= length <= MAX_BODY:
+        raise ValueError("body of %d bytes refused" % length)
     body = await asyncio.wait_for(reader.readexactly(length), 30) if length else b""
     return method, path, headers, body
 
 
+MAX_BODY = 8388608  # bytes of one request body (uploads); larger requests are refused
+MAX_HEADERS = 64
+HTTP_PER_IP = 32  # simultaneous connections from one address
+HTTP_TOTAL = 1024
+http_conns = {}  # ip -> open connections
+
+
 def response(status, body, content_type="application/octet-stream", extra=()):
-    reason = {200: "OK", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error"}
+    reason = {200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
+              500: "Internal Server Error"}
     head = [f"HTTP/1.1 {status} {reason.get(status, 'OK')}", f"Content-Type: {content_type}",
             f"Content-Length: {len(body)}", "Access-Control-Allow-Origin: *", *extra]
     return ("\r\n".join(head) + "\r\n\r\n").encode() + body
@@ -525,7 +580,12 @@ async def http_handler(server, reader, writer):
     servers ("LSP"; forza_live_lsp.py) and keeps the connection open between calls
     (Connection: Keep-Alive). GET / or /status returns a JSON status page for people and
     web front ends."""
-    peer = writer.get_extra_info("peername")
+    peer = writer.get_extra_info("peername") or ("?", 0)
+    ip = peer[0]
+    if http_conns.get(ip, 0) >= HTTP_PER_IP or sum(http_conns.values()) >= HTTP_TOTAL:
+        writer.close()
+        return
+    http_conns[ip] = http_conns.get(ip, 0) + 1
     try:
         idle = 15  # the first request
         while True:
@@ -538,6 +598,13 @@ async def http_handler(server, reader, writer):
                                  "application/json", conn)
             elif path.startswith("/world/event"):
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+                if not lsp.is_admin(peer, headers, query):
+                    reply = response(403, b"forbidden", "text/plain", conn)
+                    writer.write(reply)
+                    await writer.drain()
+                    if not keep:
+                        break
+                    continue
                 event = int(query.get("event", ["0"])[0] or 0)
                 result = server.world_request(query.get("session", ["all"])[0], event)
                 reply = response(200, json.dumps(result, indent=2).encode(), "application/json",
@@ -556,9 +623,15 @@ async def http_handler(server, reader, writer):
             await writer.drain()
             if not keep:
                 break
-    except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, ValueError):
+    except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, ValueError,
+            asyncio.LimitOverrunError, UnicodeError, OSError):
         pass
+    except Exception:  # never let one connection's task fail loudly or take the server down
+        log.exception("http connection from %s failed", peer)
     finally:
+        http_conns[ip] = http_conns.get(ip, 1) - 1
+        if http_conns[ip] <= 0:
+            http_conns.pop(ip, None)
         writer.close()
 
 
@@ -592,7 +665,8 @@ async def main():
     log.info("Forza Live listening on UDP %s:%d (epoch %04X)", args.host, args.port, server.epoch)
     if args.http_port:
         server.http_port = args.http_port
-        await asyncio.start_server(lambda r, w: http_handler(server, r, w), args.host, args.http_port)
+        await asyncio.start_server(lambda r, w: http_handler(server, r, w), args.host, args.http_port,
+                                 limit=1 << 15)
         log.info("title servers and status page on http://%s:%d/", args.host, args.http_port)
     try:
         ticks = 0

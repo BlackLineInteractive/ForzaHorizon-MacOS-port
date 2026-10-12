@@ -160,6 +160,8 @@ def decode(t, data, pos=0):
     if k == "ARR":
         (n,) = struct.unpack(">I", take(4))
         pos += 4
+        if n > len(data) - pos:  # every element takes a byte: no huge loops from a length field
+            raise ValueError("array of %d elements" % n)
         items = []
         for _ in range(n):
             item, pos = decode(t.sub, data, pos)

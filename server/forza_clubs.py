@@ -23,6 +23,7 @@ import os
 import time
 
 import forza_notifications as notifications
+import forza_limits as limits
 import forza_xtsw as x
 import forza_xtsw_all as A
 
@@ -492,6 +493,7 @@ def blob_path(name):
 
 
 def write_blob(name, data):
+    limits.accept(len(data))
     os.makedirs(os.path.dirname(blob_path(name)), exist_ok=True)
     with open(blob_path(name), "wb") as f:
         f.write(data)
@@ -519,6 +521,9 @@ def shared_car_create(xuid, body):
                      if c["owner"] == key(xuid) and c["gameCarId"] == game_id), None)
     car_id = int(existing) if existing and p["overWriteExisting"] else CLUBS.new_id()
     old = d["cars"].get(str(car_id), {})
+    if not old and sum(1 for c in d["cars"].values()
+                       if c["owner"] == key(xuid)) >= limits.PER_PLAYER["shared_cars"]:
+        return x.failure(1, "too many shared cars")
     d["cars"][str(car_id)] = {
         "id": car_id, "club": club["id"], "owner": key(xuid), "gameCarId": game_id,
         "car": {k: (v.hex() if isinstance(v, bytes) else v) for k, v in car.items()},

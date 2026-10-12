@@ -32,6 +32,7 @@ import time
 import uuid
 
 import forza_notifications as notifications
+import forza_limits as limits
 import forza_xtsw as x
 import forza_xtsw_all as A
 
@@ -128,6 +129,7 @@ class Market:
         return i
 
     def write_blob(self, name, data):
+        limits.accept(len(data))
         folder = self.path("market")
         os.makedirs(folder, exist_ok=True)
         with open(os.path.join(folder, name), "wb") as f:
@@ -264,6 +266,11 @@ def get_global_config(xuid, body):
 def create(gamertag_of):
     def handler(xuid, body):
         p, _ = x.decode(A.ForzaAuctionCreate_Params, body)
+        MARKET.load()
+        if sum(1 for o in MARKET.auctions.values() if o["seller"] == key(xuid)
+               and not o.get("removed") and not o.get("cancelled")
+               and not o.get("closedAt")) >= limits.PER_PLAYER["auctions"]:
+            raise ValueError("too many open auctions")
         aid = MARKET.new_id()
         now = time.time()
         duration = max(60.0, p["durationMs"] / 1000.0)
@@ -538,6 +545,10 @@ def remove(xuid, body):
 def send_car_gift(gamertag_of):
     def handler(xuid, body):
         p, _ = x.decode(A.ForzaGiftingSendCarGift_Params, body)
+        MARKET.load()
+        if sum(1 for o in MARKET.gifts.values() if o["sender"] == key(xuid)
+               and not o.get("retrieved")) >= limits.PER_PLAYER["gifts"]:
+            raise ValueError("too many unretrieved gifts")
         gid = MARKET.new_id()
         g = {"id": gid, "type": "car", "sender": key(xuid), "senderTag": gamertag_of(xuid),
              "recipient": key(p["recipientXuid"]), "sent": time.time(), "car": p["car"],

@@ -19,6 +19,7 @@ import os
 import time
 import uuid
 
+import forza_limits as limits
 import forza_xtsw as x
 
 log = logging.getLogger("forza-live")
@@ -141,6 +142,7 @@ def upload_file(xuid, body):
         log.info("title: UploadFile %016X: unknown score %s (%d bytes)", xuid, sid, len(data))
         return x.reply()
     board_key, key = found
+    limits.accept(len(data))
     entry = STORE.boards.get(board_key, {}).get(key)
     if not entry or entry["scoreId"] != sid:
         return x.reply()  # beaten again since
