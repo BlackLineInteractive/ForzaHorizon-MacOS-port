@@ -195,6 +195,21 @@ run) loaded on both (A the mouse in a red Fiat 500 "race to the finish line! PRO
 0/2 LAPS", B a cat) but it only ends when the mouse finishes 2 laps, so nobody driving
 never ended it.
 
+**Cat & Mouse, driven (2026-10-12, not finished).** `--playground-games 5` makes every round
+Cat & Mouse (the round index is the game's own `roundNum`, kept in the save, so with a list the
+first round varies from run to run: 6 first one time). Both consoles in the lobby (CLEAR SPRINGS
+SPRINT, 1.40 mi, 2 laps), A the mouse ("race to the finish line! PROGRESS: 0/2 LAPS"), B a
+cat. `tools/autodrive.py` with `AD_PATH_LOAD=millennia_path.txt` (no CPU cars here) follows
+that lap at 1-2 m for about 350 of its 1120 points but the circuit differs from it near the
+path's start (the path goes through the festival, where the mouse hits the grandstand wall at
+x 137, z -3910), so the mouse never got a lap counted (0/2 after 3 laps of the path); slower
+speeds (`AD_SPEED=0.45`) didn't help. Needed: the real circuit's lap (the game's GPS line
+on the minimap shows it; reading it from guest memory was not found: `sub_825F6FB0`'s
+component table is not simple). After a King round in the same run (3 min, ended normally) the
+next lobby (Cat & Mouse) sat at "WAITING FOR PLAYERS TO JOIN..." for 10 minutes with both
+consoles in it and `UserRegister` every 60 s: seen once, not reproduced or explained (the
+first Cat & Mouse lobby of the other runs started within 40 s).
+
 `GetSearchSettings` returns the session filter (`numStartingMatchmakingQueryResults`,
 QoS limits, ranking factors) and `maxConnectAttemptsBeforeCreating`,
 `maxConnectSecondsBeforeCreating`, `maxWaitingForClientsToConnectSeconds`,

@@ -626,6 +626,12 @@ of the first run), hence X is taken from the game only with a car ahead.
 
 ### Open
 
+- Real landmark finish (2026-10-12, not run): the cars need a driver that follows roads;
+  `tools/autodrive.py` only replays a recorded lap or follows CPU cars. Idea left for a
+  follow-up: a server test option for one fixed destination (a point on the Millennia path,
+  which autodrive can follow from the festival) or an image-based follower of the minimap's
+  green GPS line (the minimap is a perspective view, heading up, the route green).
+
 - Not tested with real driving to a landmark: scripted driving goes straight and hits
   the festival's barriers (in the first run A was stuck against the grandstand). The
   distance and direction text updates every 0.2 s from the same position. The left/right
