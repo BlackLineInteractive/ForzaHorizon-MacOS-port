@@ -1,12 +1,12 @@
 # Sourced by the run scripts: honour a shared benchmark lock.
 #
-# Several agents share the test machine; one can take a clean window for measurements by
+# Several people/jobs share the test machine; one can take a clean window for measurements by
 # creating BENCH_LOCK (content: "owner expiry-epoch purpose"). While someone else holds an
 # unexpired lock, starting the game would spoil their numbers: refuse (status 3).
 # BENCH_LOCK overrides the lock path; BENCH_OWNER names us (default forza);
 # FORZA_IGNORE_LOCK=1 skips the check.
 bench_lock_check() {
-    local lock="${BENCH_LOCK:-/tmp/claude-1000/-var-home-dyotson-Documents-Halo-Reach-PC/1205508e-c126-4301-83d6-bae89320ddff/scratchpad/BENCH_LOCK}"
+    local lock="${BENCH_LOCK:-${TMPDIR:-/tmp}/BENCH_LOCK}"
     [ "${FORZA_IGNORE_LOCK:-0}" = 1 ] && return 0
     [ -f "$lock" ] || return 0
     local owner expiry purpose

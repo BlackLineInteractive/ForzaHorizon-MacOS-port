@@ -6,7 +6,7 @@
 # generated/rexglue.cmake declares only default.xex's sources as codegen outputs, so
 # ninja sees the DLL changes only on its next run. FORZA_BUILD picks the build dir
 # (default linux), FORZA_JOBS the parallelism (default 4); runs at nice 15. Refuses to
-# start while another agent holds the benchmark lock (tools/bench_lock.sh).
+# start while someone else holds the benchmark lock (tools/bench_lock.sh).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/forza-recomp/out/build/${FORZA_BUILD:-linux}"

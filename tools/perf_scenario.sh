@@ -13,7 +13,7 @@
 # is labelled once it is reached (SCENE:<name>), so loading and videos stay out of the
 # scene's numbers.
 #
-# Results are only valid on an idle machine: other agents share it. The script records
+# Results are only valid on an idle machine: other jobs share it. The script records
 # other game processes (reach, forza), the 1-minute load average and MemAvailable at the
 # start and the end, and prints "BENCH: ... status=CONTENDED" if another game ran or the
 # load average was above 2 before the run. Take a clean window (BENCH_LOCK) for numbers

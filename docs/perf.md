@@ -35,13 +35,12 @@ input FIFO and prints the PERF lines:
 the normal one.
 
 **Machine load matters.** The test machine (Ryzen 7 7800X3D, 8 cores; Radeon RX 9060 XT,
-RADV) is shared with other agents that run Halo: Reach instances and builds, each game
+RADV) was shared with other game instances and builds, each game
 using 1.5-2.5 cores. Rules:
 
-- Numbers for this file and for before/after comparisons come from a clean window: ask
-  the orchestrator for one (purpose, at most 15 minutes); it pauses the other agents and
-  creates the lock file `BENCH_LOCK` (`owner expiry-epoch purpose`) in the shared scratch
-  directory. Delete it when done.
+- Numbers for this file and for before/after comparisons come from a clean window: take
+  the lock file `BENCH_LOCK` (`owner expiry-epoch purpose`, see `tools/bench_lock.sh`) for at most
+  15 minutes and pause other load. Delete it when done.
 - The run scripts (`tools/live_session.sh`, `tools/run_forza.sh`, `tools/build.sh`)
   refuse to start while someone else holds an unexpired lock (`tools/bench_lock.sh`).
 - `tools/perf_scenario.sh` records other game processes, the load average and free memory
@@ -103,7 +102,7 @@ Reading so far:
 - (Contended runs.) The game held its 30 fps cap in menus and close to it in free roam
   (27-29 fps) even with two Reach instances running. The 12 fps the user saw has not been
   reproduced in a measured run yet; candidates are a heavier scene, a cold shader cache,
-  or more load on the machine at that moment (other agents' games and builds).
+  or more load on the machine at that moment (other games and builds).
 - Free roam: one guest frame in ten takes 47-55 ms (p95), and the slowest 1% 70-120 ms.
   That is the stutter to explain first.
 - Main menu presents: frames reach the presenter every 33 ms on average but p95 is 48 ms

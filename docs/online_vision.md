@@ -334,7 +334,7 @@ Code: `server/forza_world.py` (events, world state, the AI rule), `forza_live_se
   screen fade's, computing every frame. A `REX_FATAL` (such as the "invalid function"
   one) now logs the guest call chain too (SIGABRT handler in `fault_guard.cpp`).
 - **Seen once (before the results-wait change; the run's shared memory files had been
-  unlinked by another agent's cleanup):** both humans finished (status 5) in the same
+  unlinked by another job's cleanup):** both humans finished (status 5) in the same
   second, the peer went to the lobby 49 s later (the old 45 s wait) and removed its CPU
   drivers, the host got their removals at the moment its own 45 s ran out and stayed on
   the results screen (status 5, in game) for 3+ minutes. Not seen in the 11 two-console
@@ -455,13 +455,12 @@ stopped by `run.sh`'s deadline during a rejoin; `t10.sh` now skips a step that c
 in time) and one where the script quit the wrong console (a variable clobbered by a
 loop).
 
-Test scripts (copy and adapt; paths are the last agent's scratchpad): `t7.sh` two
+Test scripts (copy and adapt; the scripts were scratch files and are not in the repo): `t7.sh` two
 players, B jumps into A's world, then N events in a row, each checked on both consoles
 (`st.py` reads the online game: mode, state, in game, players, host, preset, max AI, AI
 difficulty) with a gdb dump of every thread on a hang; `t8.sh` the same solo; `t9.sh` B
 joins during the first event's wait. `FORZA_EVENT_TRACE=1` logs every removal with its
-guest call chain and the CPU drivers' owner and level. The latest copies are in the
-agent scratchpad's `forza-mmo5/`, with `t10.sh` (players leaving, below), `t11.sh`-`t13.sh`
+guest call chain and the CPU drivers' owner and level. Related scripts: `t10.sh` (players leaving, below), `t11.sh`-`t13.sh`
 (head-to-head challenges) and `carpos.py` (every car's kind and position, from
 `/proc/PID/mem`).
 
