@@ -45,8 +45,8 @@ PEER_TIMEOUT = 30.0  # seconds without a HELLO before a peer is dropped
 MAX_PAYLOAD = 1500
 # Per-player limit on bytes the server sends for it (relayed datagrams; a broadcast counts
 # once per recipient): a two-player match is about 2 KB/s per player, a full lobby of 16
-# a few times that. Defaults to 64 KB/s with 256 KB bursts (--rate-limit).
-RATE_LIMIT = 64 * 1024
+# a few times that. Defaults to 160 KB/s with 640 KB bursts (--rate-limit).
+RATE_LIMIT = 160 * 1024
 RATE_BURST = 4 * RATE_LIMIT
 
 

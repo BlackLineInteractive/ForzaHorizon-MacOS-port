@@ -45,7 +45,7 @@ internet side (it travels in plain HTTP).
 
 - per address: 16 players, 1500 datagrams/s, 2 new registrations/s, 32 HTTP connections
   (they stay open while idle: the game needs that);
-- per player: relay budget 64 KB/s (`--rate-limit`), 30 open auctions, 50 unretrieved
+- per player: relay budget 160 KB/s (`--rate-limit`), 30 open auctions, 50 unretrieved
   gifts, 100 shared cars; one upload at most 2 MB, HTTP bodies at most 8 MB;
 - whole server: ghosts, cars and market blobs at most `FORZA_DISK_CAP_MB` (default 4096) MB,
   at most `FORZA_MAX_PLAYERS` (20000) player records;
