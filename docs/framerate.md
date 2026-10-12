@@ -246,3 +246,48 @@ anyway), A (START RIVALS).
   the hook) while the guest frames are steady.
 - The developer options `framesperrender` and `unlockframerate` were not tried (they would
   run the main loop without the vblank wait).
+
+## Open: race-start animations look too fast (2026-10-12)
+
+Report: in every race start the crowd, the intro shots, the camera sweep over the grid and
+the countdown look too fast. The player saw it at the default `frame_rate` (30) on a 144 Hz
+monitor, and again while watching test runs of the current build. Not fixed yet.
+
+What was measured (Millennia Masters race start, host wall clock, no debugger attached
+while sampling):
+
+- **Shot timeline.** The cuts land at the same wall time at frame_rate 30, 60 and 144: the
+  cut to the player's car 11.0 / 10.7 / 10.7 s after START RACE, the chase camera 14.0 /
+  13.7 / 13.7 s, GO about 17.3 s. Screenshots every 0.1-0.3 s show the same camera pose at
+  the same wall time at 60 and 144.
+- **Clocks that follow real time.** The pre-race track camera (`CTSCCamera` family; update
+  `sub_82862170`, called from the world update) gets the main loop's dt (1/144 s at 144)
+  and its clock (+0x2D8, double, advanced in `sub_82855900`) runs 1.003 s per second.
+  Granny model clocks (`GrannySetModelClock` = `sub_829C3CB8`, thunk `sub_823F7660`; set
+  from `sub_823F7858` and `sub_82463910`) run 0.985 s per second at 30 and 1.000 at 144.
+  They are driven on the render thread by `CProceduralAnimatedScene` (vtable slot 15,
+  `sub_8245A2F8`) with the simulated time accumulated since the last render (per-view dt at
+  +0x1DE8, set by `CTrackPresentation` slot 54, `sub_823F1828`).
+- **Guest swaps** run at 30.0 a second at 30 and never above 144 at 144, so nothing is
+  consumed twice per simulated frame; the guest vblank is the SDK's wall-clock timer
+  (`GraphicsSystem` VSync thread), not tied to host presents.
+
+Fixed steps found, none of them seen driving the race start:
+
+- `CAnimatedModelPresentation@Presentation_Unified::Update` (vtable slot 14,
+  `sub_82DD2B78`) adds 1/60 per call through `sub_82D83268`; not called in the race. In
+  the opening drive animated models get the real dt through `sub_82D8E458`.
+- `CCrowdPresentation@Presentation_Unified` (sprite crowd: 25 ms flipbook frames in
+  `sub_82DE2130`, skinned crowd bake at 1/30 in `sub_82DDD6A8`): never called in the
+  race or the opening drive.
+- A render-thread fade (`sub_8257E5B8`, render object +0x1940..+0x1964) counts down 1/30
+  per rendered frame: right at 30, faster above.
+
+So the visible crowd is probably not the Granny models that were clocked: next, find the
+crowd draw in a RenderDoc capture of the race start (its shader and the constant that
+animates it: impostor or flipbook crowds, a per-frame counter, a vblank count), measure a
+crowd member's motion period in frame-dump bursts at 30, 60 and 144, and compare it with
+the clip lengths in `media/Spectators.zip` (`anims/*.anim.bin`). Tools used: gdb on the
+running game (breakpoints on `sub_XXXXXXXX`, f1 is at PPCContext+344), sampling guest
+memory through `/proc/PID/mem`, and a scan of the guest heap for values that rise
+steadily, compared between 60 and 144.
