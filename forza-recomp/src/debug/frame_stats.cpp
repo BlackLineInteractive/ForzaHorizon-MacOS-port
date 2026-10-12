@@ -2,6 +2,8 @@
 
 #include "frame_stats.h"
 
+#include "../hooks/frame_time.h"
+
 #include <rex/logging.h>
 #include <rex/ui/flags.h>
 
@@ -22,12 +24,10 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr double kWindowSeconds = 10.0;
-// The game draws every second guest vblank: 33.3 ms at the console's 60 Hz, 16.7 ms with
-// frame_rate = 60 (docs/framerate.md).
-double TargetMs() {
-  const double hz = std::clamp(REXCVAR_GET(video_mode_refresh_rate), 24.0, 240.0);
-  return 2000.0 / hz;
-}
+// The game's main loop runs every second guest vblank (33.3 ms at the console's 60 Hz), or
+// every vblank when twice the frame rate is past the SDK's limit (src/hooks/frame_time.cpp,
+// docs/framerate.md).
+double TargetMs() { return forza::frame_time::TargetMs(); }
 constexpr double kHitchMs = 100.0;
 
 struct Config {

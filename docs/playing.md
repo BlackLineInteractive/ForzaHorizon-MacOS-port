@@ -54,10 +54,12 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   Race Central's LEADERBOARDS show them, and X RIVALS on an event's ticket races you
   against another player's ghost for a bounty.
 - **Frame rate:** `frame_rate = 60` in `forza.toml` (or `tools/play.sh --frame_rate=60`)
-  runs the game at 60 fps instead of the console's 30. The game times its physics and
-  clocks in real time, so they keep their speed. Free roam runs 59 fps; a race with 7 AI
-  cars about 42 fps for now, bound by the GPU emulation
-  ([`docs/framerate.md`](docs/framerate.md)).
+  runs the game at 60 fps instead of the console's 30; 120, 144 or any rate up to 240 work
+  too. The game times its physics and clocks in real time, so they keep their speed, and
+  players at different frame rates race together. Free roam runs 60 fps at 60, about 115
+  at 120 and 112 at 144; a race with 7 AI cars 60, 76 and 70, bound by the GPU emulation
+  ([`docs/framerate.md`](docs/framerate.md)). 144 needs the SDK overlay with patch 0037
+  (`tools/build_rexglue_sdk.sh`); without it 144 drops to about 72 in free roam.
 - **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
   once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`.
 - **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`.

@@ -494,6 +494,24 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
   no such draws. Free roam was smoke-tested with both: it boots, renders and drives at 30 fps.
   Details: RecompiledHaloReach `docs/rendering.md`.
 
+- 2026-10-12: **120 and 144 fps.** `frame_rate` takes 30 or 60-240 (details and
+  measurements in `docs/framerate.md`).
+  - Above 60 the game's frame time (whole milliseconds from `KeTimeStampBundle`) jittered
+    5-9 ms at 144 and moved the car unevenly (16.5% frame-to-frame); `src/hooks/frame_time.cpp`
+    answers the main loop's `sub_8247C168` call with `f31` from the guest tick clock (the
+    nominal vblank time of an on-target frame), so frames get exactly 1/144 s and motion is
+    even (2.8%). The guest vblank runs at twice the frame rate; SDK patch 0037 lets it reach
+    288 Hz (the SDK capped it at 240), without which 144 needs a 144 Hz vblank and drops to
+    72 fps when the GPU emulation misses a vblank.
+  - Clean windows: free roam 115 fps at 120 and 112 at 144; races 76 and 70 (bound by the
+    GPU emulation; the main loop still runs at the target). The race clock, the
+    acceleration, an autodriven lap (114.6 / 114.6 / 115.1 s at 60 / 120 / 144) and the
+    audio rate are unchanged.
+  - Online: 144 against 60 races fine (each car's copy within 0.4 m of the real one, about
+    20 ms ahead), the 144 player sends up to twice the datagrams (about 50 KB/s per peer).
+    Rivals ghosts play back the same at 60 and 144, and one recorded at 144 is the size of
+    a 30 fps one and plays back at 60 in step with the lap that made it.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.

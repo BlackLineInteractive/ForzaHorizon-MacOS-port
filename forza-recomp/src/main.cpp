@@ -3,10 +3,12 @@
 #include "generated/default/forza_init.h"
 
 #include "forza_app.h"
+#include "hooks/frame_time.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include <string>
 #include <string_view>
 
 REX_DEFINE_APP(forza, ForzaApp::Create)
@@ -17,14 +19,22 @@ REXCVAR_DEFINE_STRING(gpu_backend, "vulkan", "GPU",
 
 std::string ForzaGpuBackend() { return REXCVAR_GET(gpu_backend); }
 
-// The game's vblank callback wakes its main loop every second guest vblank, and the main
-// loop takes its frame time from the kernel's millisecond tick count (snapped to 1/59.94 s
-// when a frame took 16-17 ms), so the frame rate follows the guest vblank rate and the
-// simulation stays at real-time speed (docs/framerate.md).
+// The game's vblank callback wakes its main loop every second guest vblank (every vblank
+// with its mainthread30fps option off), and the main loop times its simulation in real
+// time, so the frame rate follows the guest vblank rate. Above 30 the frame time comes from
+// the guest tick clock instead of the kernel's millisecond tick (src/hooks/frame_time.cpp,
+// docs/framerate.md).
 REXCVAR_DEFINE_INT32(frame_rate, 30, "Display",
-                     "Frame rate: 30 (the console's) or 60. 60 runs the guest vblank at 120 Hz; "
-                     "the game times its simulation in real time (docs/framerate.md)")
-    .validator([](std::string_view v) { return v == "30" || v == "60"; })
+                     "Frame rate: 30 (the console's), or 60 to 240 (60, 120, 144, ...). The "
+                     "game times its simulation in real time (docs/framerate.md)")
+    .validator([](std::string_view v) {
+      int fps = 0;
+      for (char c : v) {
+        if (c < '0' || c > '9' || fps > 1000) return false;
+        fps = fps * 10 + (c - '0');
+      }
+      return fps == 30 || (fps >= 60 && fps <= 240);
+    })
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 namespace {
@@ -52,8 +62,10 @@ void ApplyForzaCvarDefaults() {
   SetSdkCvarDefault("vulkan_allow_present_mode_immediate", "false");
   SetSdkCvarDefault("vulkan_allow_present_mode_mailbox", "false");
   SetSdkCvarDefault("vulkan_allow_present_mode_fifo_relaxed", "false");
-  // frame_rate = 60: twice the console's vblank rate, so the main loop's wake-up every
-  // second vblank comes at 60 Hz. A video_mode_refresh_rate set in forza.toml or on the
-  // command line wins.
-  if (REXCVAR_GET(frame_rate) == 60) SetSdkCvarDefault("video_mode_refresh_rate", "120");
+  // frame_rate above 30: the guest vblank at twice the frame rate, or at the frame rate when
+  // twice is past the SDK's limit (src/hooks/frame_time.cpp). A video_mode_refresh_rate set
+  // in forza.toml or on the command line wins.
+  if (REXCVAR_GET(frame_rate) > 30) {
+    SetSdkCvarDefault("video_mode_refresh_rate", std::to_string(forza::frame_time::VblankHz()));
+  }
 }

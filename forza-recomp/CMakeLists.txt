@@ -75,6 +75,7 @@ set(FORZA_SOURCES
     src/debug/frame_stats.cpp
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
+    src/hooks/frame_time.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/world_challenge.cpp
     src/hooks/world_drop_in.cpp

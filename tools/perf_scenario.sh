@@ -7,6 +7,10 @@
 #             the festival intro video (skipped), then the opening drive at full throttle
 #   freeroam  a profile in free roam: main menu, Single Player, 90 s of free roam
 #             driving (use FORZA_XUID and --user_data_root for a copied save)
+#   race      the user's Xenia save (as freeroam): free roam, the GoPro Millennia Masters
+#             sign-up at the spawn point, the race with the throttle held RACE_SECS (26) s
+#             from the countdown; screenshots every ~1.6 s (race clock, speedometer) and the
+#             cars' positions in DIR/cars.txt (tools/carlog.py)
 #   cold      runs with an empty shader cache (--cache_root=DIR/cache_cold); warm (default)
 #             uses the normal one.
 # Intro videos are skipped with START/A through the input FIFO as they start; each scene
@@ -18,6 +22,7 @@
 # start and the end, and prints "BENCH: ... status=CONTENDED" if another game ran or the
 # load average was above 2 before the run. Take a clean window (BENCH_LOCK) for numbers
 # that go into docs/perf.md.
+# Above 30 fps the FRAMETIME lines (main-loop dt) are printed too.
 # PERF_CPUPROF=1 also samples the CPU during the measured scene (src/debug/cpu_profile.cpp)
 # into DIR/cpuprof.txt; summarize with tools/cpuprof_report.py.
 # Prints the BENCH line and the PERF lines; the log stays in DIR.
@@ -40,6 +45,9 @@ if [ "$CACHE" = cold ]; then
     extra+=(--cache_root="$DIR/cache_cold")
 fi
 export RECOMP_PERF=1 RECOMP_PERF_SCENE=boot RECOMP_PERF_CSV="$DIR/frames.csv"
+# Above 30 fps: the main loop's dt statistics and per-frame log (src/hooks/frame_time.cpp),
+# read by tools/frametime_report.py DIR.
+export FORZA_FRAMETIME_LOG=1 FORZA_FRAMETIME_CSV="$DIR/frametime.csv"
 export FORZA_CPUPROF="$DIR/cpuprof.txt"
 prof() { [ "${PERF_CPUPROF:-0}" = 1 ] && say "PROF:$1"; return 0; }
 "$ROOT/tools/live_session.sh" "$DIR" 600 "${extra[@]}" "$@" > /dev/null || exit $?
@@ -67,6 +75,18 @@ case "$SCENARIO" in
         say SCENE:freeroam; prof START
         for _ in $(seq 1 18); do say RT:5; wait_s 5; done
         prof STOP ;;
+    race)
+        # The first A dismisses the "MISSING CONTENT" (DLC) notice, the second picks SINGLE
+        # PLAYER. At the spawn: X, A, A, X sign up for the festival race; A starts it.
+        wait_s 10; say A; wait_s 3; say A; say SCENE:loading; wait_s 45
+        say X; wait_s 4; say A; wait_s 5; say A; wait_s 6; say X; wait_s 16
+        say SCENE:race_intro; say A; wait_s 12; say SCENE:race; prof START
+        python3 "$ROOT/tools/carlog.py" "$GAME_PID" "${RACE_SECS:-26}" "$DIR/cars.txt" &
+        say "RT:${RACE_SECS:-26}"
+        for i in $(seq 1 $(( ${RACE_SECS:-26} / 2 ))); do
+            sleep 1.6; "$ROOT/tools/live_shot.sh" "$DIR" "race$i" > /dev/null
+        done
+        wait; prof STOP ;;
     *) echo "unknown scenario $SCENARIO" >&2 ;;
 esac
 say SCENE:end; wait_s 2
@@ -82,7 +102,7 @@ if [ "$s_others" != none ] || [ "$e_others" != none ] || awk "BEGIN {exit !($s_l
 fi
 echo "BENCH: scenario=$SCENARIO cache=$CACHE start: others=$s_others load1=$s_load mem=${s_mem}G" \
      "end: others=$e_others load1=$e_load mem=${e_mem}G status=$status" | tee "$DIR/bench.txt"
-grep -h "PERF: scene=" "$DIR/forza.log" | sed 's/^.*PERF: /PERF: /'
+grep -h "PERF: scene=\|FRAMETIME: " "$DIR/forza.log" | sed 's/^.*\(PERF\|FRAMETIME\): /\1: /'
 for shm in /dev/shm/xenia_memory_*; do
     [ -O "$shm" ] || continue
     grep -qs "$(basename "$shm")" /proc/[0-9]*/maps || rm -f -- "$shm"

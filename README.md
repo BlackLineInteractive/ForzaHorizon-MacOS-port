@@ -15,8 +15,10 @@ C++ is generated from your copy on your machine; no binaries are published here.
 - **Single player:** boot, menus, the opening drive, free roam, festival events and races
   (tested with a circuit race against 7 AI drivers), audio, saves, and all DLC packages.
   Saves from Xenia Canary can be continued.
-- **60 fps:** `frame_rate = 60` in `forza.toml`. Free roam holds about 59 fps; a race with
-  7 AI cars about 42 fps for now, bound by the GPU emulation ([`docs/framerate.md`](docs/framerate.md)).
+- **60, 120 or 144 fps:** `frame_rate = 60` (or 120, 144, any rate up to 240) in
+  `forza.toml`. Free roam holds 60, about 115 at 120 and 112 at 144; a race with 7 AI cars
+  60, 76 and 70, bound by the GPU emulation. Physics, the race clock and online play keep
+  their timing ([`docs/framerate.md`](docs/framerate.md)).
 - **Online** (through the Forza Live server): sign-in as a Gold member, Find Game and races
   with XP and credits, parties and custom games, a shared online free roam (the Horizon World
   playlist), Playground Games modes (Infected, Cat & Mouse, King), leaderboards and Rivals
