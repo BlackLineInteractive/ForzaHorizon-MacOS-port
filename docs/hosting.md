@@ -52,3 +52,6 @@ internet side (it travels in plain HTTP).
 - the status page lists gamertags and XUIDs but no IP addresses.
 
 Players are not authenticated (the XUID is whatever the client claims).
+
+The relay limit is 160 KB/s per player (bursts of 4 s) because a 144 fps player sends about
+50 KB/s to each peer.

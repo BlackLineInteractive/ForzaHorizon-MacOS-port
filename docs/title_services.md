@@ -539,14 +539,20 @@ two consoles into Playground Games; `seed.py`: a score from a fake player, optio
 a ghost; `ut_*.py`: in-process unit tests of the services) were scratch files and are not
 in the repo.
 
-## State and next steps (Message Center work, 2026-10-11)
+## State and next steps (Message Center work, 2026-10-12)
 
 Done and tested in the game: notifications (format, categories, poll timing), operator
 gifts (credits and a stock car collected), club invitation and join request with two
-consoles, Monthly Rivals listing and loading a trial. Not finished: the two-console test
-of RIVAL CHALLENGE from a real `NotifyRival` (the server side is unit-tested; the plan
-was B beating A on board 199 with A's score set to 200 s in `DATA_DIR/scoreboards.json`,
-B driving `tools/autodrive.py b 240` with `AD_PATH_LOAD=forza-svc/millennia_path.txt`).
+consoles, Monthly Rivals listing and loading a trial, and **RIVAL CHALLENGE from a real
+`NotifyRival`**: two consoles, board 199 with A's score at 200 s and B's entry removed; B
+(at the Millennia Masters sign-up) X (ticket), X (RIVALS), A (rival), A (car), X (race
+anyway), A (START RIVALS), `autodrive.py b 240` with `AD_PATH_LOAD` beat A in one lap
+(1:53.281), A (finish); the game sent `SubmitScoreEx` and `NotifyRival`, A's next poll
+(about 2 s later) put 1 on MESSAGE CENTER in the pause menu, and it read "[HZN] DriverB
+beat you in the GoPro Millennia Masters Horizon Rival Challenge on <date>! Their time:
+01:53.281, Their car: LP700-4, Track: Clear Springs Circuit, Would you like to try to beat
+them now?". First attempt, no
+retries needed.
 Session scripts: `solo2.sh` (`START="a b"` for two consoles, `SERVER_ARGS=...`),
 `ctl.sh`, `seed.py` / `seed_tt.py` (time trial scores), `ut_notify.py` (unit test of the
 notification flows), all scratch files not kept in the repo.
