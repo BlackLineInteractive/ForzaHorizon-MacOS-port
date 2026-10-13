@@ -22,6 +22,9 @@
 *.spa
 *.bin.be
 
+# Private notes, test scripts and captures (never published)
+/docs/private/
+
 # ------------------------------------------------------------------------------
 # 2. Codegen & Static Recompilation Outputs
 # ------------------------------------------------------------------------------
