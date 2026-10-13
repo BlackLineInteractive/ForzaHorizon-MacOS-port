@@ -1,10 +1,32 @@
-# RecompiledForzaHorizon
+<p align="center">
+  <img src="docs/images/logo.svg" alt="Forza Horizon 1: ReImagined logo" width="160">
+</p>
 
-A native PC port of **Forza Horizon (Xbox 360)**, made by statically recompiling the
-original PowerPC executable to C++ with the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk).
-It follows the approach of [RecompiledHaloReach](https://github.com/Dyotson/RecompiledHaloReach),
-and comes with its own self-hostable online server (`server/`) that stands in for Xbox LIVE
-and Turn 10's services.
+<h1 align="center">Forza Horizon 1: ReImagined</h1>
+
+<p align="center">
+  The original 2012 Forza Horizon, running natively on PC and rebuilt around the modern
+  Horizon experience: a shared online open world, leaderboards and rivals, high frame rates.
+</p>
+
+**Forza Horizon 1: ReImagined** takes **Forza Horizon (Xbox 360)** and brings it closer to
+what Horizon is today. The game runs natively on Linux and Windows, made by statically
+recompiling the original PowerPC executable to C++ with the
+[ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) (the approach of
+[RecompiledHaloReach](https://github.com/Dyotson/RecompiledHaloReach)), and on top of that
+the project focuses on:
+
+- **Better gameplay:** 60, 120 or 144 fps with the physics and race timing intact, native
+  controllers, saves and all DLC.
+- **Online free roam:** the **Horizon World** playlist drops every online player into one
+  shared Colorado, where you drive, meet and race together; the goal is an MMO-like world
+  where events fill up with players and the grid's free slots with AI
+  ([`docs/online_vision.md`](docs/online_vision.md)).
+- **Leaderboards and rivals:** times, ghosts and bounties shared between players, Monthly
+  Rivals, car clubs and the Message Center, all live again.
+- **Your own servers:** Xbox LIVE and Turn 10's services are long gone, so the project
+  ships the **Forza Live** server (`server/`), self-hostable, with a public instance to
+  join.
 
 This repository contains **no game code and no game data**. You need your own copy of the
 game (the Games on Demand package of the base version, Title ID `4D5309C9`). The recompiled
@@ -124,7 +146,8 @@ own server, see [`docs/hosting.md`](docs/hosting.md).
 [`docs/PROJECT.md`](docs/PROJECT.md) (status log, findings, debugging recipes),
 [`docs/playing.md`](docs/playing.md), [`docs/hosting.md`](docs/hosting.md),
 [`docs/perf.md`](docs/perf.md), [`docs/framerate.md`](docs/framerate.md),
-[`docs/BACKLOG.md`](docs/BACKLOG.md) (planned work).
+[`docs/BACKLOG.md`](docs/BACKLOG.md) (planned work: installers, more than 8 players in
+free roam).
 
 ## Legal
 
