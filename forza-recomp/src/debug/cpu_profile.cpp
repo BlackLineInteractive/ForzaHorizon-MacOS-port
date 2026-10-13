@@ -14,6 +14,11 @@
 #include <rex/logging.h>
 
 #ifndef _WIN32
+#ifdef __APPLE__
+#define _XOPEN_SOURCE 700  // ucontext_t on macOS
+#define _DARWIN_C_SOURCE   // with the BSD extensions (dladdr, setitimer) kept
+#include <pthread.h>
+#endif
 #include <dlfcn.h>
 #include <signal.h>
 #include <sys/syscall.h>
@@ -53,11 +58,27 @@ void OnProf(int, siginfo_t*, void* uc) {
   const size_t i = count.fetch_add(1, std::memory_order_relaxed);
   if (i >= kMaxSamples) return;
   const auto* ctx = static_cast<const ucontext_t*>(uc);
+#if defined(__APPLE__) && defined(__x86_64__)
+  samples[i].pc = uint64_t(ctx->uc_mcontext->__ss.__rip);
+  uint64_t tid = 0;
+  pthread_threadid_np(nullptr, &tid);
+  samples[i].tid = uint32_t(tid);
+#elif defined(__APPLE__)
+  samples[i].pc = uint64_t(ctx->uc_mcontext->__ss.__pc);
+  uint64_t tid = 0;
+  pthread_threadid_np(nullptr, &tid);
+  samples[i].tid = uint32_t(tid);
+#else
   samples[i].pc = uint64_t(ctx->uc_mcontext.gregs[REG_RIP]);
   samples[i].tid = uint32_t(syscall(SYS_gettid));
+#endif
 }
 
 std::string ThreadName(uint32_t tid) {
+#ifdef __APPLE__
+  (void)tid;  // no /proc; tools/cpuprof_report.py still sums per thread id
+  return "?";
+#endif
   char path[64];
   std::snprintf(path, sizeof(path), "/proc/self/task/%u/comm", tid);
   std::string name = "?";

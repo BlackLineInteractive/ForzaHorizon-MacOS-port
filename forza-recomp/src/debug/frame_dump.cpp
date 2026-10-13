@@ -41,7 +41,10 @@
 #include <rex/system/xmemory.h>
 #include <rex/thread/mutex.h>
 
+// RenderDoc has no macOS build (its header stops with "Unknown platform").
+#ifndef __APPLE__
 #include <renderdoc/renderdoc_app.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -168,6 +171,14 @@ void MaybeInvalidatePhysicalMemory(double now) {
 // Captures explicitly with Start/EndFrameCapture spanning a few guest frames:
 // TriggerCapture never produced a file with this runtime's presenter.
 void MaybeTriggerRenderDocCapture(double now) {
+#ifdef __APPLE__
+  static bool warned = false;
+  if (!warned && (std::getenv("FORZA_RDCAPTURE") || std::getenv("FORZA_RDCAPTURE_TRIGGER"))) {
+    REXLOG_WARN("FORZA_RDCAPTURE: RenderDoc is not available on macOS (use Xcode's Metal capture)");
+    warned = true;
+  }
+  (void)now;
+#else
   static const std::vector<double> times = ParseTimes(std::getenv("FORZA_RDCAPTURE"));
   static size_t next = 0;
   static int swaps = 0;  // swaps captured so far in the open capture, 0 when idle
@@ -211,6 +222,7 @@ void MaybeTriggerRenderDocCapture(double now) {
   api->StartFrameCapture(nullptr, nullptr);
   REXLOG_INFO("FORZA_RDCAPTURE: capture started at t={:.2f}s", now);
   swaps = 1;
+#endif
 }
 
 // Saves the presenter's current guest output image (what the window shows before
