@@ -91,6 +91,13 @@ keyboard off.
 - Without `tools/build_rexglue_sdk.sh` the build ships the nightly's stock plugin (CMake
   warns that `FORZA_XENOS_PLUGIN` is missing), which lacks every fix in
   `docs/sdk_patches.md`.
+- **Black screen while pipelines compile.** The first time a scene loads (after START,
+  the prologue drive) the screen stays black for a minute or more: MoltenVK turns every new
+  pipeline into MSL and compiles it (about 6 a second on the Radeon Pro 5500M), and with
+  `async_shader_compilation` the draws wait for them. It is not a hang; the log shows
+  `Creating graphics pipeline state` lines. The descriptions are stored in
+  `~/.local/share/forza/cache/shaders/shareable/` (`4D5309C9.xsh`, `.fbo.vk.xpso`), and the
+  next start compiles them up front, so each scene is slow only once.
 - MoltenVK warns `Metal does not support disabling primitive restart`: Metal always
   restarts strips at the 0xFFFF / 0xFFFFFFFF index, so a guest strip draw that relies on
   restart being off could lose triangles. No visible effect seen so far.
