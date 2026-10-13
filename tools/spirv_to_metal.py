@@ -8,8 +8,9 @@ SPIRV-Cross, and checks that Apple's Metal compiler accepts the result.
 
 Bindings: every Vulkan descriptor set becomes a Metal argument buffer at [[buffer(set)]],
 with the Vulkan binding number as the member index ([[id(binding)]]), so a Metal backend can
-fill them in the same layout the Vulkan backend uses. Push constants go to
-[[buffer(PUSH_CONSTANT_BUFFER)]] (see --push-constant-buffer).
+fill them in the same layout the Vulkan backend uses. Push constants become a plain
+[[buffer(n)]] argument right after the argument buffers (n = number of descriptor sets).
+Shaders SPIRV-Cross cannot translate are hand-written in <out>/manual/ and used instead.
 
 Usage: tools/spirv_to_metal.py [--sdk ~/rexglue-sdk-src-forza/sdk] [--out forza-recomp/metal_shaders]
                                [--metallib forza-recomp/metal_shaders/rexgpu_builtin.metallib]

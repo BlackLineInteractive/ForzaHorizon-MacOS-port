@@ -18,3 +18,6 @@ projects, measured in this game's races; RecompiledHaloReach `docs/perf.md` has 
 0037 is in `librexruntime.so`, so the overlay carries a patched runtime (as for 0028).
 Without it the game falls back on its own: `src/hooks/frame_time.cpp` reads the setting's
 range and uses a divider of one when twice the frame rate does not fit.
+
+macOS does not get these patches yet: `tools/build_rexglue_sdk.sh` only builds the Linux
+plugin, so a Mac build ships the nightly's stock `librexgpu-xenos.dylib` (`docs/macos.md`).

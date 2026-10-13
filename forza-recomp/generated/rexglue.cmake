@@ -118,7 +118,6 @@ add_custom_command(
     OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.build.stamp"
            ${REXGLUE_ENTRYPOINT_GENERATED_SOURCES}
     COMMAND $<TARGET_FILE:rex::rexglue> codegen ${CMAKE_CURRENT_SOURCE_DIR}/forza_manifest.toml
-    COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.build.stamp"
     DEPFILE "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.d"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating recompiled code for forza"

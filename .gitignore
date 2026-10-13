@@ -53,11 +53,19 @@ codegen-warnings.log
 # ------------------------------------------------------------------------------
 # 4. Emulator Dumps, Caches & Server Data
 # ------------------------------------------------------------------------------
-# Runtime shader dumps and caches (metal_shaders source is tracked)
+# Runtime shader dumps and caches (metal_shaders/*.metal sources are tracked)
 /shaders/
 /shader_cache/
 *.spv
 *.dxbc
+# Compiled Metal shaders: rebuilt by tools/spirv_to_metal.py --metallib
+*.air
+*.metallib
+# Metal frame captures (Xcode) and CPU profiler output (src/debug/cpu_profile.cpp)
+*.gputrace
+cpuprof.txt
+# Guest frame dumps (FORZA_SCREENSHOT / FORZA_FRAMEDUMP_DIR)
+forza_shot_*.ppm
 
 # Forza Live server data and runtime profiles
 forza_live_data/
@@ -89,6 +97,7 @@ tools/unxmem
 *.dylib
 *.dll
 *.exe
+*.dSYM/
 
 # LSP & tooling cache
 compile_commands.json
@@ -119,6 +128,17 @@ env/
 ._*
 .Spotlight-V100
 .Trashes
+.AppleDouble
+.LSOverride
+.fseventsd
+.TemporaryItems
+.DocumentRevisions-V100
+
+# Xcode (Metal debugging, Instruments)
+xcuserdata/
+DerivedData/
+*.xcscmblueprint
+*.trace/
 
 # Windows
 Thumbs.db
@@ -135,14 +155,15 @@ imgui.ini
 .idea/
 *.iml
 
-.vscode/
-!.vscode/settings.json
+# Shared editor configs are tracked; settings.json holds machine paths (cmake.sourceDirectory)
+.vscode/*
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
 
-.claude/
-!.claude/settings.local.json
+# Claude Code: the shared settings.json is tracked, settings.local.json is personal
+.claude/*
+!.claude/settings.json
 
 *.swp
 *.swo

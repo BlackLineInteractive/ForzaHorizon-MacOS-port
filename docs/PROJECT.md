@@ -1,7 +1,7 @@
 # RecompiledForzaHorizon: native static recompilation of Forza Horizon (Xbox 360)
 
 Goal: run Forza Horizon (Xbox 360, Title ID `4D5309C9`, base version, no title update)
-natively on x86-64 Linux (later Windows) by statically recompiling `default.xex` and its
+natively on x86-64 Linux (later Windows and macOS) by statically recompiling `default.xex` and its
 facade DLLs (PowerPC Xenon) to C++ with the ReXGlue SDK. The approach, tooling and many
 runtime fixes come from [RecompiledHaloReach](https://github.com/Dyotson/RecompiledHaloReach)
 (same SDK, same author); files taken from it say so.
@@ -47,6 +47,7 @@ instructions; both read `extracted/analysis/`.
 | `forza-recomp/src/` | Runtime code: app class, kernel/XAM overrides, debug tools |
 | `forza-recomp/generated/` | Codegen output; only `rexglue.cmake` is tracked here, the rest goes to the private `RecompiledForzaHorizon-generated` repo (`tools/sync_generated_repo.sh`) |
 | `patches/rexglue-sdk/` | SDK patches (started as Reach's 19 GPU patches) |
+| `forza-recomp/metal_shaders/` | The SDK's built-in shaders in Metal Shading Language (`tools/spirv_to_metal.py`, `docs/macos.md`) |
 | `ghidra_projects/ForzaHorizon` | Ghidra project with `default.xex` (gitignored) |
 
 ## Tooling
@@ -511,6 +512,21 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     20 ms ahead), the 144 player sends up to twice the datagrams (about 50 KB/s per peer).
     Rivals ghosts play back the same at 60 and 144, and one recorded at 144 is the size of
     a 30 fps one and plays back at 60 in step with the lap that made it.
+
+- 2026-10-13: **macOS (Intel).** The game builds with Apple clang against the `mac-amd64`
+  nightly and starts on a MacBook Pro 16" (2019, Radeon Pro 5500M), rendering through the
+  Vulkan backend on MoltenVK (FIFO at 3584x2240). Details in `docs/macos.md`.
+  - `gpu_backend` defaults to `vulkan` on macOS too (the plugin refuses `metal`), and the
+    Vulkan hooks are installed there as well; `metal_hooks.mm` only logs the device and
+    counts presents.
+  - `src/debug/cpu_profile.cpp` reads the PC from the Darwin `ucontext`; `frame_dump.cpp`
+    leaves out RenderDoc, which has no macOS build.
+  - `tools/spirv_to_metal.py` rewrote the SDK's 109 built-in SPIR-V shaders in MSL 3.0
+    (SPIRV-Cross, argument buffers in the Vulkan descriptor layout; `immediate_ps` by hand).
+    All compile and give pipeline states on the Radeon and the UHD 630. No backend uses
+    them yet.
+  - Still to do: the patched plugin for macOS (the stock one logs `Resolve region is
+    empty`, patch 0023), Mac launch scripts, measurements, then a native Metal backend.
 
 ## Debugging recipes
 
