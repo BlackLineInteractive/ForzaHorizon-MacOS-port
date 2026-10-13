@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the ReXGlue Xenos GPU plugin (librexgpu-xenos.so) and the codegen tool
+# Build the ReXGlue Xenos GPU plugin (librexgpu-xenos.so/.dylib) and the codegen tool
 # (rexglue) from source with the fixes in patches/rexglue-sdk/, and install them
 # into an overlay of the nightly SDK so the forza build (its codegen step and the
 # plugin it ships) and tools/run_forza.sh pick them up. Adapted from
@@ -14,28 +14,59 @@
 # Upstream closed the report (rexglue/rexglue-sdk#456) without taking GPU
 # changes, so we carry the patches (docs/sdk_patches.md).
 #
+# Runs on Linux (linux-amd64) and macOS (mac-amd64, mac-arm64: the SDK's preset names).
+#
 # Environment:
 #   REXSDK_NIGHTLY  installed nightly SDK the overlay is based on
-#                   (default ~/rexglue-sdk-nightly/0.10.0.24/linux-amd64)
+#                   (default ~/rexglue-sdk-nightly/0.10.0.24/<platform>)
 #   REXSDK_SRC      source checkout (default ~/rexglue-sdk-src-forza/sdk)
 #   REXSDK_JOBS     parallel compile jobs (default 4; the build runs at nice 15)
 #   REXSDK_PATCHED  overlay prefix to create
-#                   (default ~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64)
+#                   (default ~/rexglue-sdk-patched-forza/0.10.0.24/<platform>)
 #
 # The defaults are this project's own clone and overlay: RecompiledHaloReach uses
 # ~/rexglue-sdk-src and ~/rexglue-sdk-patched, and the two patch sets may differ.
 #
 # Only the plugin and bin/rexglue are taken from this build; every other SDK file
 # in the overlay is a symlink into the nightly, so both must be built from the
-# nightly's exact commit to stay ABI-compatible with its librexruntime.so.
+# nightly's exact commit to stay ABI-compatible with its librexruntime.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightly-20261002-bd833a2a)
-NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
+if [ "$(uname -s)" = Darwin ]; then
+    case "$(uname -m)" in arm64) PLATFORM=mac-arm64 ;; *) PLATFORM=mac-amd64 ;; esac
+    SO=dylib
+else
+    PLATFORM=linux-amd64
+    SO=so
+fi
+NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/$PLATFORM}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"
-OVERLAY="${REXSDK_PATCHED:-$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64}"
+OVERLAY="${REXSDK_PATCHED:-$HOME/rexglue-sdk-patched-forza/0.10.0.24/$PLATFORM}"
 BREW=/home/linuxbrew/.linuxbrew
+PLUGIN="librexgpu-xenos.$SO"
+RUNTIME="librexruntime.$SO"
+
+# Gives a binary copied out of the build tree the nightly's library search path (its own
+# points into the build tree): $ORIGIN on Linux, @loader_path on macOS.
+set_rpath() {
+    if [ "$SO" = dylib ]; then
+        local old
+        for old in $(otool -l "$1" | awk '/cmd LC_RPATH/ {getline; getline; print $2}'); do
+            install_name_tool -delete_rpath "$old" "$1" 2> /dev/null
+        done
+        install_name_tool -add_rpath @loader_path -add_rpath @loader_path/../lib "$1" 2> /dev/null
+        # Editing load commands invalidates the signature; arm64 refuses unsigned code.
+        codesign --force --sign - "$1" 2> /dev/null
+    else
+        local script
+        script="$(mktemp)"
+        printf 'file(RPATH_SET FILE "%s" NEW_RPATH "$ORIGIN:$ORIGIN/../lib")\n' "$1" > "$script"
+        cmake -P "$script"
+        rm -f "$script"
+    fi
+}
 
 SOURCE_ONLY=0
 [ "${1:-}" = --source-only ] && SOURCE_ONLY=1
@@ -95,12 +126,14 @@ if [ -d "$BREW/opt/xorgproto/include" ]; then
                  "-DCMAKE_CXX_FLAGS=-march=x86-64-v2 $inc"
                  "-DCMAKE_SHARED_LINKER_FLAGS=-L$BREW/lib")
 fi
-( cd "$SRC" && cmake --preset linux-amd64 "${cmake_args[@]}" > /dev/null )
-nice -n 15 cmake --build "$SRC/out/build/linux-amd64" --config Release --target rexgpu-xenos rexglue rexruntime \
+# ${a[@]+...}: bash 3.2 (macOS) treats an empty array as unset under set -u.
+( cd "$SRC" && cmake --preset "$PLATFORM" ${cmake_args[@]+"${cmake_args[@]}"} > /dev/null )
+nice -n 15 cmake --build "$SRC/out/build/$PLATFORM" --config Release --target rexgpu-xenos rexglue rexruntime \
     --parallel "${REXSDK_JOBS:-4}"
 
-built="$SRC/out/linux-amd64/Release/librexgpu-xenos.so"
-[ -n "$built" ] || { echo "librexgpu-xenos.so not found in the build tree" >&2; exit 1; }
+OUT="$SRC/out/$PLATFORM/Release"
+built="$OUT/$PLUGIN"
+[ -f "$built" ] || { echo "$PLUGIN not found in the build tree ($OUT)" >&2; exit 1; }
 
 # Overlay: symlink everything from the nightly, then replace the plugin.
 mkdir -p "$OVERLAY/lib"
@@ -112,25 +145,23 @@ for entry in "$NIGHTLY"/*; do
 done
 for entry in "$NIGHTLY"/lib/*; do
     # The plugin and runtime are installed below (atomically); never swap them for a symlink.
-    case "$(basename "$entry")" in librexgpu-xenos.so|librexruntime.so) continue ;; esac
+    case "$(basename "$entry")" in "$PLUGIN"|"$RUNTIME") continue ;; esac
     ln -sfn "$entry" "$OVERLAY/lib/$(basename "$entry")"
 done
 # Install by rename: overwriting a mapped .so in place can crash a running game.
 plugin_new="$OVERLAY/lib/.librexgpu-xenos.new"
 cp "$built" "$plugin_new"
-mv -f "$plugin_new" "$OVERLAY/lib/librexgpu-xenos.so"
-echo "patched plugin: $OVERLAY/lib/librexgpu-xenos.so"
+[ "$SO" = so ] || set_rpath "$plugin_new"
+mv -f "$plugin_new" "$OVERLAY/lib/$PLUGIN"
+echo "patched plugin: $OVERLAY/lib/$PLUGIN"
 
 # The runtime (patch 0028: faster memory protection queries). Same commit as the nightly's,
 # so it is a drop-in; give it the nightly's RUNPATH (its own is the build tree's).
 runtime_new="$OVERLAY/lib/.librexruntime.new"
-cp "$SRC/out/linux-amd64/Release/librexruntime.so" "$runtime_new"
-rpath_script="$(mktemp)"
-printf 'file(RPATH_SET FILE "%s" NEW_RPATH "$ORIGIN:$ORIGIN/../lib")\n' "$runtime_new" > "$rpath_script"
-cmake -P "$rpath_script"
-rm -f "$rpath_script"
-mv -f "$runtime_new" "$OVERLAY/lib/librexruntime.so"
-echo "patched runtime: $OVERLAY/lib/librexruntime.so"
+cp "$OUT/$RUNTIME" "$runtime_new"
+set_rpath "$runtime_new"
+mv -f "$runtime_new" "$OVERLAY/lib/$RUNTIME"
+echo "patched runtime: $OVERLAY/lib/$RUNTIME"
 
 # The codegen tool: patches change the generated code too (0025: Xenon's dot-product
 # overflow). Older overlays linked bin/ to the nightly's; it is a directory now.
@@ -142,11 +173,8 @@ done
 # The build tree's rexglue has that tree's absolute RUNPATH; give it the nightly's
 # ($ORIGIN/../lib is the overlay's lib/, which links into the nightly).
 tool_new="$OVERLAY/bin/.rexglue.new"
-cp "$SRC/out/linux-amd64/Release/rexglue" "$tool_new"
-rpath_script="$(mktemp)"
-printf 'file(RPATH_SET FILE "%s" NEW_RPATH "$ORIGIN:$ORIGIN/../lib")\n' "$tool_new" > "$rpath_script"
-cmake -P "$rpath_script"
-rm -f "$rpath_script"
+cp "$OUT/rexglue" "$tool_new"
+set_rpath "$tool_new"
 if cmp -s "$tool_new" "$OVERLAY/bin/rexglue"; then
     rm -f "$tool_new"
 else
@@ -165,13 +193,13 @@ echo "patched codegen: $OVERLAY/bin/rexglue"
 for build in "$ROOT"/forza-recomp/out/build/*/; do
     # Some build dirs have the plugin but no CMakeCache.txt (copies made for tests);
     # under set -e the sed would end the script before it reached the others.
-    [ -f "$build/librexgpu-xenos.so" ] && [ -f "$build/CMakeCache.txt" ] || continue
+    [ -f "$build/$PLUGIN" ] && [ -f "$build/CMakeCache.txt" ] || continue
     sdk_dir="$(sed -n 's/^rexglue_DIR:PATH=//p' "$build/CMakeCache.txt")"
     case "$sdk_dir" in
         "$NIGHTLY"/*|"$OVERLAY"/*)
             # Rename over it: running instances may have the old file mapped.
-            cp "$OVERLAY/lib/librexgpu-xenos.so" "$build/.librexgpu-xenos.new"
-            mv -f "$build/.librexgpu-xenos.new" "$build/librexgpu-xenos.so"
+            cp "$OVERLAY/lib/$PLUGIN" "$build/.librexgpu-xenos.new"
+            mv -f "$build/.librexgpu-xenos.new" "$build/$PLUGIN"
             echo "staged into $build" ;;
     esac
 done

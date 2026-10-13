@@ -16,10 +16,21 @@ if(FORZA_SKIP_CODEGEN AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/defa
     message(FATAL_ERROR "FORZA_SKIP_CODEGEN is on but generated/default has no codegen output")
 endif()
 
+# The SDK's name for this host (its preset and nightly directory): linux-amd64, mac-amd64...
+if(APPLE)
+    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(FORZA_SDK_PLATFORM mac-arm64)
+    else()
+        set(FORZA_SDK_PLATFORM mac-amd64)
+    endif()
+else()
+    set(FORZA_SDK_PLATFORM linux-amd64)
+endif()
+
 # Codegen runs the patched SDK overlay's rexglue when there is one: tools/build_rexglue_sdk.sh
 # builds it from patches/rexglue-sdk/, and some patches change the generated code (0025:
 # Xenon's dot products give QNaN on overflow, which the collision GJK depends on).
-set(FORZA_REXGLUE "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/bin/rexglue"
+set(FORZA_REXGLUE "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/${FORZA_SDK_PLATFORM}/bin/rexglue"
     CACHE FILEPATH "Patched rexglue to run codegen with instead of the SDK's")
 
 # generated/rexglue.cmake lists the generated sources at configure time, so on a fresh
@@ -153,16 +164,12 @@ endif()
 # This project's overlay first; RecompiledHaloReach's (same patch set so far) otherwise.
 if(APPLE)
     set(_plugin_name "librexgpu-xenos.dylib")
-    set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/darwin-amd64/lib/${_plugin_name}")
-    if(NOT EXISTS "${_forza_plugin}")
-        set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched/0.10.0.24/darwin-amd64/lib/${_plugin_name}")
-    endif()
 else()
     set(_plugin_name "librexgpu-xenos.so")
-    set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib/${_plugin_name}")
-    if(NOT EXISTS "${_forza_plugin}")
-        set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched/0.10.0.24/linux-amd64/lib/${_plugin_name}")
-    endif()
+endif()
+set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/${FORZA_SDK_PLATFORM}/lib/${_plugin_name}")
+if(NOT EXISTS "${_forza_plugin}")
+    set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched/0.10.0.24/${FORZA_SDK_PLATFORM}/lib/${_plugin_name}")
 endif()
 set(FORZA_XENOS_PLUGIN "${_forza_plugin}"
     CACHE FILEPATH "Patched GPU plugin to ship instead of the SDK's")
