@@ -39,7 +39,7 @@ else
 fi
 cp "$ROOT/tools/xcontent_extract.py" "$ROOT/tools/install_dlc.py" "$DIST/"
 cp "$ROOT"/server/*.py "$DIST/server/"
-cp "$ROOT/LICENSE" "$DIST/licenses/RecompiledForzaHorizon.txt"
+cp "$ROOT/LICENSE" "$DIST/licenses/ForzaHorizon1-ReImagined.txt"
 [ -f "$SRC/LICENSE" ] && cp "$SRC/LICENSE" "$DIST/licenses/rexglue-sdk.txt"
 [ -f "$SDK/share/licenses/SDL3/LICENSE.txt" ] && cp "$SDK/share/licenses/SDL3/LICENSE.txt" "$DIST/licenses/SDL3.txt"
 cp "$ROOT/tools/dist/play.linux.sh" "$DIST/play.sh"

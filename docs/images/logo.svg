@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Forza Horizon 1: ReImagined</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#241747"/>
+      <stop offset="0.45" stop-color="#7a2a6e"/>
+      <stop offset="0.75" stop-color="#ff5470"/>
+      <stop offset="1" stop-color="#ff9d3c"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe9a0"/>
+      <stop offset="1" stop-color="#ff8a3d"/>
+    </linearGradient>
+    <mask id="sunStripes">
+      <rect width="512" height="512" fill="#fff"/>
+      <rect x="0" y="222" width="512" height="5" fill="#000"/>
+      <rect x="0" y="240" width="512" height="7" fill="#000"/>
+      <rect x="0" y="260" width="512" height="9" fill="#000"/>
+    </mask>
+    <clipPath id="badge">
+      <rect width="512" height="512" rx="104"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#badge)">
+    <!-- Sky and sun -->
+    <rect width="512" height="512" fill="url(#sky)"/>
+    <circle cx="370" cy="214" r="80" fill="url(#sun)" mask="url(#sunStripes)"/>
+
+    <!-- The finished half of the mountain: solid low-poly facets -->
+    <g stroke-linejoin="round">
+      <polygon points="32,410 150,270 190,300 250,160 250,320 260,410" fill="#2b1d55"/>
+      <polygon points="32,410 150,270 140,410" fill="#2b1d55"/>
+      <polygon points="150,270 190,300 140,410" fill="#3a2770"/>
+      <polygon points="190,300 140,410 250,320" fill="#33225f"/>
+      <polygon points="140,410 250,320 260,410" fill="#281a4f"/>
+      <polygon points="190,300 250,160 250,320" fill="#4a3285"/>
+      <!-- Snow cap -->
+      <polygon points="250,160 224,221 236,212 244,224 250,214" fill="#fff4e6"/>
+    </g>
+
+    <!-- The half being rebuilt: wireframe facets, see-through -->
+    <g fill="#1d1440" fill-opacity="0.28" stroke="#ffd9a8" stroke-width="3.5" stroke-linejoin="round">
+      <polygon points="250,160 310,250 250,320"/>
+      <polygon points="310,250 250,320 330,330"/>
+      <polygon points="310,250 350,222 330,330" stroke-dasharray="6 7"/>
+      <polygon points="350,222 480,410 330,330"/>
+      <polygon points="330,330 480,410 380,410"/>
+      <polygon points="250,320 330,330 260,410"/>
+      <polygon points="330,330 260,410 380,410"/>
+    </g>
+    <g fill="#ffd9a8">
+      <circle cx="310" cy="250" r="6"/>
+      <circle cx="350" cy="222" r="6"/>
+      <circle cx="330" cy="330" r="6"/>
+      <circle cx="380" cy="410" r="6"/>
+      <circle cx="250" cy="320" r="6"/>
+    </g>
+
+    <!-- A facet being placed into its slot -->
+    <polygon points="310,250 350,222 330,330" transform="translate(34 -44)" fill="#ff5f7e" stroke="#ffd9a8" stroke-width="3" stroke-linejoin="round"/>
+
+    <!-- Ground and the road into the mountains -->
+    <rect x="0" y="406" width="512" height="106" fill="#140d30"/>
+    <path d="M150 512 C 210 470, 280 450, 252 408 L 264 408 C 300 450, 260 480, 330 512 Z" fill="#3b2f63"/>
+    <path d="M240 512 C 262 476, 286 448, 258 410" fill="none" stroke="#ffcf6b" stroke-width="5" stroke-dasharray="16 12" stroke-linecap="round"/>
+  </g>
+</svg>
