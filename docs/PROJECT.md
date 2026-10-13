@@ -525,8 +525,12 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     (SPIRV-Cross, argument buffers in the Vulkan descriptor layout; `immediate_ps` by hand).
     All compile and give pipeline states on the Radeon and the UHD 630. No backend uses
     them yet.
-  - Still to do: the patched plugin for macOS (the stock one logs `Resolve region is
-    empty`, patch 0023), Mac launch scripts, measurements, then a native Metal backend.
+  - `tools/build_rexglue_sdk.sh` builds the patched SDK on macOS too (overlay
+    `~/rexglue-sdk-patched-forza/0.10.0.24/mac-amd64`); all patches apply and build
+    unchanged. With it the game reaches the title screen with correct colours, and the
+    stock plugin's `Resolve region is empty` / `Failed in backend` errors are gone.
+  - Still to do: Mac launch scripts, gameplay past the title screen, measurements, then a
+    native Metal backend.
 
 ## Debugging recipes
 

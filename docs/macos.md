@@ -24,11 +24,24 @@ Apple Silicon (`mac-arm64` nightly) has not been tried.
 #    download is complete, a truncated zip has no central directory)
 # 2. The game files, as on Linux
 python3 tools/xcontent_extract.py /path/to/4D5309C9/00007000/<name> extract extracted/game
-# 3. Configure (the first configure runs codegen, a few minutes) and build with Apple clang
+# 3. The patched SDK (GPU plugin, runtime, codegen tool) into the overlay
+#    ~/rexglue-sdk-patched-forza/0.10.0.24/mac-amd64 (about 780 build steps)
+REXSDK_JOBS=12 tools/build_rexglue_sdk.sh
+# 4. Configure against the overlay (codegen runs with its rexglue) and build with Apple clang
+O=$HOME/rexglue-sdk-patched-forza/0.10.0.24/mac-amd64
 cmake -S forza-recomp -B forza-recomp/out/build/macos -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH=$HOME/rexglue-sdk-nightly/0.10.0.24/mac-amd64
+  -DCMAKE_PREFIX_PATH=$O
 ninja -C forza-recomp/out/build/macos
 ```
+
+The overlay is the nightly with the plugin, `librexruntime.dylib` and `bin/rexglue`
+replaced: every other entry is a symlink into the nightly. `build_rexglue_sdk.sh` picks the
+SDK preset from the host (`mac-amd64`, `mac-arm64`), gives the copied binaries the
+nightly's `@loader_path` rpaths with `install_name_tool` and signs them ad hoc. Configuring
+against the overlay matters: the build copies the runtime and plugin next to `forza` from
+the prefix it finds, and codegen must run the patched `rexglue` (0025 changes the generated
+code). An existing build dir keeps its old `rexglue_DIR` and `FORZA_SKIP_CODEGEN`: pass
+`-Drexglue_DIR=$O/lib/cmake/rexglue -DFORZA_SKIP_CODEGEN=OFF` when switching it.
 
 Homebrew provides CMake, Ninja, `vulkan-headers` and `molten-vk` (CMake adds their include
 directories when present). `forza-recomp/CMakeLists.txt` names the GPU plugin
@@ -49,17 +62,20 @@ cd forza-recomp/out/build/macos
 device and, with `RECOMP_PERF`, counts presents; the Vulkan hooks
 (`src/platform/vulkan_hooks.cpp`) are installed on macOS as everywhere else.
 
-First run (2026-10-13): the game starts, picks the Radeon Pro 5500M through MoltenVK
-(Vulkan 1.3), presents with FIFO at 3584x2240 and renders.
+First run (2026-10-13, stock plugin): the game starts, picks the Radeon Pro 5500M through
+MoltenVK (Vulkan 1.3), presents with FIFO at 3584x2240 and renders. With the patched
+plugin it reaches the title screen ("PRESS START") with correct colours and textures, and
+90 seconds of log hold no GPU errors (the stock plugin logged `Resolve region is empty`
+and `PM4_DRAW_INDX_2 ... Failed in backend` every frame). Gameplay is not tested yet.
 
 ## Known issues
 
-- **No SDK patches yet.** `tools/build_rexglue_sdk.sh` builds the patched plugin for Linux
-  only, so macOS runs the nightly's stock `librexgpu-xenos.dylib` (CMake warns that
-  `FORZA_XENOS_PLUGIN` is missing). The log fills with `Resolve region is empty` /
-  `PM4_DRAW_INDX_2 ... Failed in backend`, which patch 0023 fixes, and the other
-  `patches/rexglue-sdk/` fixes are missing too (textures 256x too dark from 0001, free roam
-  crash from 0025, see `docs/sdk_patches.md`).
+- Without `tools/build_rexglue_sdk.sh` the build ships the nightly's stock plugin (CMake
+  warns that `FORZA_XENOS_PLUGIN` is missing), which lacks every fix in
+  `docs/sdk_patches.md`.
+- MoltenVK warns `Metal does not support disabling primitive restart`: Metal always
+  restarts strips at the 0xFFFF / 0xFFFFFFFF index, so a guest strip draw that relies on
+  restart being off could lose triangles. No visible effect seen so far.
 - MoltenVK has no Vulkan format for the guest formats `k_1_5_5_5`, `k_6_5_5` and
   `k_DXT3A_AS_1_1_1_1`, and no sparse binding (the 512 MB shared memory buffer is allocated
   in full).
@@ -100,8 +116,8 @@ to MSL at run time too.
 
 ## Roadmap
 
-1. Patched GPU plugin on macOS: make `tools/build_rexglue_sdk.sh` use the `mac-amd64`
-   preset, `.dylib` names and `@loader_path` instead of `$ORIGIN`.
+1. Mac launch scripts (`tools/play.sh`, `tools/run_forza.sh`), then play past the title
+   screen: prologue drive, free roam, a race.
 2. Measure MoltenVK (`RECOMP_PERF`, `tools/frametime_report.py`) in free roam and a race,
    and try MoltenVK's own settings (Metal argument buffers, `MVK_CONFIG_*`).
 3. Native Metal backend in the SDK fork (`src/graphics/metal/`), in this order: presenter,

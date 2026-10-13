@@ -19,5 +19,6 @@ projects, measured in this game's races; RecompiledHaloReach `docs/perf.md` has 
 Without it the game falls back on its own: `src/hooks/frame_time.cpp` reads the setting's
 range and uses a divider of one when twice the frame rate does not fit.
 
-macOS does not get these patches yet: `tools/build_rexglue_sdk.sh` only builds the Linux
-plugin, so a Mac build ships the nightly's stock `librexgpu-xenos.dylib` (`docs/macos.md`).
+On macOS the same script builds the overlay `~/rexglue-sdk-patched-forza/0.10.0.24/mac-amd64`
+(`.dylib`s, `@loader_path` rpaths); every patch applies and builds there unchanged
+(`docs/macos.md`).

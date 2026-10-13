@@ -35,16 +35,17 @@ Captured from the recompiled game running natively on Linux.
   the Message Center (beaten-time alerts, gifts, club requests, invitations, news).
   Details in [`docs/online_vision.md`](docs/online_vision.md) and [`docs/title_services.md`](docs/title_services.md).
 
-- **macOS (experimental):** builds natively on an Intel Mac and starts, rendering through
-  Vulkan on MoltenVK (tested on a Radeon Pro 5500M). The SDK's built-in shaders are
+- **macOS (experimental):** builds natively on an Intel Mac with this project's SDK
+  patches and reaches the title screen, rendering through Vulkan on MoltenVK (tested on a
+  Radeon Pro 5500M). The SDK's built-in shaders are
   rewritten in Metal for a native Metal backend that is not written yet
   ([`docs/macos.md`](docs/macos.md)).
 
 ## Known issues
 
 - Early work in progress; tested mostly in short sessions.
-- macOS runs the SDK's stock GPU plugin, without this project's GPU fixes
-  (`patches/rexglue-sdk/`), and its launch scripts are Linux-only ([`docs/macos.md`](docs/macos.md)).
+- macOS: gameplay past the title screen is untested, and the launch scripts are
+  Linux-only ([`docs/macos.md`](docs/macos.md)).
 - The Auction House exists on the server only; its screens were removed from the game, and
   the storefront answers empty.
 - Keyboard and mouse (`--mnk_mode=true`) is untested; use a controller.
@@ -109,13 +110,14 @@ Experimental, on Intel Macs (Apple Silicon untried). Unpack the `mac-amd64` nigh
 `~/rexglue-sdk-nightly/0.10.0.24/mac-amd64`, extract the game files as above, then:
 
 ```sh
+tools/build_rexglue_sdk.sh       # the patched SDK, ~/rexglue-sdk-patched-forza/0.10.0.24/mac-amd64
 cmake -S forza-recomp -B forza-recomp/out/build/macos -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH=$HOME/rexglue-sdk-nightly/0.10.0.24/mac-amd64
+  -DCMAKE_PREFIX_PATH=$HOME/rexglue-sdk-patched-forza/0.10.0.24/mac-amd64
 ninja -C forza-recomp/out/build/macos
 cd forza-recomp/out/build/macos && ./forza --game_data_root=/path/to/extracted/game
 ```
 
-It renders through MoltenVK (shipped with the SDK). `tools/spirv_to_metal.py` rewrites the
+It renders through MoltenVK (shipped with the SDK), with the same SDK patches as Linux. `tools/spirv_to_metal.py` rewrites the
 SDK's 109 built-in shaders in Metal Shading Language (`forza-recomp/metal_shaders/`) for the
 coming native Metal backend. Status, known issues and the roadmap:
 [`docs/macos.md`](docs/macos.md).
