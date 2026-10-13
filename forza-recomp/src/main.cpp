@@ -66,4 +66,11 @@ void ApplyForzaCvarDefaults() {
   if (REXCVAR_GET(frame_rate) > 30) {
     SetSdkCvarDefault("video_mode_refresh_rate", std::to_string(forza::frame_time::VblankHz()));
   }
+#if defined(__APPLE__)
+  // Macs are mostly laptops without a pad: the keyboard drives the controller (WASD steer,
+  // E/O throttle, Q/I brake, Space A, Backspace B, Return START; the SDK's keybind_*
+  // settings). Pads still work alongside it: every input is merged into user 0
+  // (src/kernel/input_autopress.cpp).
+  SetSdkCvarDefault("mnk_mode", "true");
+#endif
 }

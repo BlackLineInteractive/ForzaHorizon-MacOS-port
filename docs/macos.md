@@ -68,6 +68,24 @@ plugin it reaches the title screen ("PRESS START") with correct colours and text
 90 seconds of log hold no GPU errors (the stock plugin logged `Resolve region is empty`
 and `PM4_DRAW_INDX_2 ... Failed in backend` every frame). Gameplay is not tested yet.
 
+## Controls
+
+The keyboard is on by default on macOS (`mnk_mode`, set in `src/main.cpp`; a pad works
+alongside it, both drive player 1):
+
+| Pad | Keys |
+| --- | --- |
+| Left stick (steer) | W A S D |
+| Right trigger (throttle) / left trigger (brake) | E or O / Q or I |
+| A / B / X / Y | Space or ; / Backspace or ' / L / P |
+| LB / RB | 1 / 3 |
+| Right stick (camera) | arrow keys |
+| D-pad | Shift + arrow keys |
+| START / BACK | Return or X / Tab or Z |
+
+The SDK's `keybind_*` settings in `forza.toml` remap them; `--mnk_mode=false` turns the
+keyboard off.
+
 ## Known issues
 
 - Without `tools/build_rexglue_sdk.sh` the build ships the nightly's stock plugin (CMake
