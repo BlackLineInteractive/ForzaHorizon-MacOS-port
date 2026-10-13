@@ -1,4 +1,4 @@
-Forza Horizon (Xbox 360) recompiled for Linux - https://github.com/Dyotson/RecompiledForzaHorizon
+Forza Horizon 1: ReImagined for Linux - https://github.com/Dyotson/ForzaHorizon1-ReImagined
 Built from commit @COMMIT@.
 
 Needs x86-64 Linux with glibc @GLIBC@ or later and libstdc++ @GLIBCXX@, a Vulkan 1.3 GPU

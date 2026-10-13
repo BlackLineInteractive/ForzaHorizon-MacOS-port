@@ -1,4 +1,4 @@
-# RecompiledForzaHorizon: native static recompilation of Forza Horizon (Xbox 360)
+# Forza Horizon 1: ReImagined: native static recompilation of Forza Horizon (Xbox 360)
 
 Goal: run Forza Horizon (Xbox 360, Title ID `4D5309C9`, base version, no title update)
 natively on x86-64 Linux (later Windows and macOS) by statically recompiling `default.xex` and its
